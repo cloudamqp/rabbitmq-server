@@ -39,7 +39,16 @@ before_script:
   - make --version
 
 script:
-  - make tests
+  - make ct-config_schema
+  - make ct-simple_ha
+  - make ct-sup_delayed_restart
+  - make ct-sync_detection
+  - make ct-term_to_binary_compat_prop
+  - make ct-topic_permission
+  - make ct-unit_inbroker_non_parallel
+  - make ct-unit_inbroker_parallel
+  - make ct-unit
+  - make ct-worker_pool
 
 before_cache:
   - $TRAVIS_BUILD_DIR/.travis.sh kiex_cleanup
