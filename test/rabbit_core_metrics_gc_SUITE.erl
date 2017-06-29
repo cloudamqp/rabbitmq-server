@@ -343,10 +343,12 @@ cluster_queue_metrics(Config) ->
     Node0 = rabbit_ct_broker_helpers:get_node_config(Config, 0, nodename),
     Node1 = rabbit_ct_broker_helpers:get_node_config(Config, 1, nodename),
 
-    rabbit_ct_broker_helpers:rpc(Config, Node0, erlang, send, [rabbit_core_metrics_gc, start_gc]),
-    rabbit_ct_broker_helpers:rpc(Config, Node0, gen_server, call, [rabbit_core_metrics_gc, test]),
-    rabbit_ct_broker_helpers:rpc(Config, Node1, erlang, send, [rabbit_core_metrics_gc, start_gc]),
-    rabbit_ct_broker_helpers:rpc(Config, Node1, gen_server, call, [rabbit_core_metrics_gc, test]),
+    % Note: must start these processes as there is a delay in starting them up
+    % when a node starts.
+    rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_core_metrics_gc, start_link,[]),
+    rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_core_metrics_gc, start_link,[]),
+    rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_mgmt_gc, start_link, []),
+    rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_mgmt_gc, start_link, []),
 
     Ch = rabbit_ct_client_helpers:open_channel(Config, Node0),
 
@@ -373,21 +375,20 @@ cluster_queue_metrics(Config) ->
                                                            ets, lookup, [rabbit_queue, Name]),
     ok = rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_amqqueue, sync_mirrors, [QPid]),
 
-    timer:sleep(1000),
-
-    rabbit_ct_broker_helpers:rpc(Config, Node0, erlang, send, [rabbit_core_metrics_gc, start_gc]),
-    rabbit_ct_broker_helpers:rpc(Config, Node0, gen_server, call, [rabbit_core_metrics_gc, test]),
-    rabbit_ct_broker_helpers:rpc(Config, Node1, erlang, send, [rabbit_core_metrics_gc, start_gc]),
-    rabbit_ct_broker_helpers:rpc(Config, Node1, gen_server, call, [rabbit_core_metrics_gc, test]),
+    % TODO this is necessary since run_gc_soon schedules a gc 5 seconds after a sync
+    timer:sleep(6000),
 
     % Check ETS table for data
     % rabbit_core_metrics:queue_stats
     % {Name, MessagesReady, MessagesUnacknowledge, Messages, Reductions}
     % [{{resource,<<"/">>,queue,<<"cluster_queue_metrics">>}, 1,0,1,10524}]
-    [] = rabbit_ct_broker_helpers:rpc(Config, Node0, ets, tab2list, [queue_coarse_metrics]),
+    Node0Metrics = rabbit_ct_broker_helpers:rpc(Config, Node0, ets, tab2list, [queue_coarse_metrics]),
+    ct:pal("Node0Metrics: ~p~n", [Node0Metrics]), % TODO remove
+    [] = Node0Metrics,
 
-    EtsData1_0 = rabbit_ct_broker_helpers:rpc(Config, Node1, ets, tab2list, [queue_coarse_metrics]),
-    [{Name, 1, 0, 1, _}] = EtsData1_0,
+    Node1Metrics = rabbit_ct_broker_helpers:rpc(Config, Node1, ets, tab2list, [queue_coarse_metrics]),
+    ct:pal("Node1Metrics: ~p~n", [Node1Metrics]), % TODO remove
+    [{Name, 1, 0, 1, _}] = Node1Metrics,
 
     amqp_channel:call(Ch, #'queue.delete'{queue=QueueName}),
     rabbit_ct_client_helpers:close_channel(Ch),

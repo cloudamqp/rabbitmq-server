@@ -24,10 +24,10 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
--export([run_gc_queues/0]).
+-export([run_gc_soon/0]).
 
-run_gc_queues() ->
-    erlang:send(?MODULE, run_gc_queues).
+run_gc_soon() ->
+    ?MODULE ! run_gc_soon.
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -42,9 +42,8 @@ handle_call(test, _From, State) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-handle_info(run_gc_queues, State) ->
-    gc_queues(),
-    {noreply, State};
+handle_info(run_gc_soon, State) ->
+    {noreply, start_timer(5000, State)};
 handle_info(start_gc, State) ->
     gc_connections(),
     gc_channels(),
@@ -61,9 +60,13 @@ terminate(_Reason, #state{timer = TRef}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+start_timer(Interval, #state{timer = TRef0} = St) ->
+    timer:cancel(TRef0),
+    TRef1 = erlang:send_after(Interval, self(), start_gc),
+    St#state{timer = TRef1}.
+
 start_timer(#state{interval = Interval} = St) ->
-    TRef = erlang:send_after(Interval, self(), start_gc),
-    St#state{timer = TRef}.
+    start_timer(Interval, St).
 
 gc_connections() ->
     gc_process(connection_created),
