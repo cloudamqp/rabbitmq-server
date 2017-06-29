@@ -24,7 +24,10 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
--export([run_gc_soon/0]).
+-export([run_gc_soon/0, run_gc_soon/1]).
+
+run_gc_soon(Interval) ->
+    ?MODULE ! {run_gc_soon, Interval}.
 
 run_gc_soon() ->
     ?MODULE ! run_gc_soon.
@@ -42,6 +45,8 @@ handle_call(test, _From, State) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
+handle_info({run_gc_soon, Interval}, State) ->
+    {noreply, start_timer(Interval, State)};
 handle_info(run_gc_soon, State) ->
     {noreply, start_timer(5000, State)};
 handle_info(start_gc, State) ->

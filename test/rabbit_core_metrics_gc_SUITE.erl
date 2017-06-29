@@ -345,8 +345,8 @@ cluster_queue_metrics(Config) ->
 
     % Note: must start these processes as there is a delay in starting them up
     % when a node starts.
-    rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_core_metrics_gc, start_link,[]),
-    rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_core_metrics_gc, start_link,[]),
+    rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_core_metrics_gc, start_link, []),
+    rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_core_metrics_gc, start_link, []),
     rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_mgmt_gc, start_link, []),
     rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_mgmt_gc, start_link, []),
 
@@ -375,8 +375,15 @@ cluster_queue_metrics(Config) ->
                                                            ets, lookup, [rabbit_queue, Name]),
     ok = rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_amqqueue, sync_mirrors, [QPid]),
 
-    % TODO this is necessary since run_gc_soon schedules a gc 5 seconds after a sync
-    timer:sleep(6000),
+    % Note: the default is to schedule a GC 5 seconds after a sync, but we want it a bit
+    % sooner here. Note that running it too soon can cause badarg errors for missing
+    % stats tables
+    rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_core_metrics_gc, run_gc_soon, [1000]),
+    rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_core_metrics_gc, run_gc_soon, [1000]),
+    rabbit_ct_broker_helpers:rpc(Config, Node0, rabbit_mgmt_gc, run_gc_soon, [1000]),
+    rabbit_ct_broker_helpers:rpc(Config, Node1, rabbit_mgmt_gc, run_gc_soon, [1000]),
+
+    timer:sleep(1500),
 
     % Check ETS table for data
     % rabbit_core_metrics:queue_stats
