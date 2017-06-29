@@ -263,6 +263,7 @@ syncer_loop(Ref, MPid, SPids) ->
             %% want.
             ok;
         {done, Ref} ->
+            run_gc(),
             [SPid ! {sync_complete, Ref} || SPid <- SPids]
     end.
 
@@ -341,6 +342,7 @@ slave_sync_loop(Args = {Ref, MRef, Syncer, BQ, UpdateRamDuration, Parent},
         {sync_complete, Ref} ->
             erlang:demonitor(MRef, [flush]),
             credit_flow:peer_down(Syncer),
+            run_gc(),
             {ok, State};
         {'$gen_cast', {set_maximum_since_use, Age}} ->
             ok = file_handle_cache:set_maximum_since_use(Age),
@@ -414,3 +416,7 @@ batch_publish_delivered(Batch, MA, BQ, BQS) ->
 
 props(Props) ->
     Props#message_properties{needs_confirming = false}.
+
+run_gc() ->
+    rabbit_core_metrics_gc:run_gc_queues(),
+    rabbit_mgmt_gc:run_gc_queues().
