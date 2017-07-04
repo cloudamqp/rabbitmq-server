@@ -331,17 +331,22 @@ slave_sync_loop(Args = {Ref, MRef, Syncer, BQ, UpdateRamDuration, Parent},
             %% queue); instead we have ones nearer the head. If we then
             %% sync with a newly promoted master, or even just receive
             %% messages from it, we have a hole in the middle. So the
-            %% only thing to do here is purge.
-            {_MsgCount, BQS1} = BQ:purge(BQ:purge_acks(BQS)),
-            credit_flow:peer_down(Syncer),
-            {failed, {[], TRef, BQS1}};
+            %% thing to do here is purge, unless we configure to retain
+            %% messages via 'slave_sync_message_retention' = true, treating
+            %% the sync procedure as complete.
+            case application:get_env(rabbit, slave_sync_message_retention) of
+                {ok, true} ->
+                    sync_complete(MRef, Syncer, State);
+                _ ->
+                    {_MsgCount, BQS1} = BQ:purge(BQ:purge_acks(BQS)),
+                    credit_flow:peer_down(Syncer),
+                    {failed, {[], TRef, BQS1}}
+            end;
         {bump_credit, Msg} ->
             credit_flow:handle_bump_msg(Msg),
             slave_sync_loop(Args, State);
         {sync_complete, Ref} ->
-            erlang:demonitor(MRef, [flush]),
-            credit_flow:peer_down(Syncer),
-            {ok, State};
+            sync_complete(MRef, Syncer, State);
         {'$gen_cast', {set_maximum_since_use, Age}} ->
             ok = file_handle_cache:set_maximum_since_use(Age),
             slave_sync_loop(Args, State);
@@ -365,6 +370,11 @@ slave_sync_loop(Args = {Ref, MRef, Syncer, BQ, UpdateRamDuration, Parent},
             BQ:delete_and_terminate(Reason, BQS),
             {stop, Reason, {[], TRef, undefined}}
     end.
+
+sync_complete(MRef, Syncer, State) ->
+    erlang:demonitor(MRef, [flush]),
+    credit_flow:peer_down(Syncer),
+    {ok, State}.
 
 %% We are partitioning messages by the Unacked element in the tuple.
 %% when unacked = true, then it's a publish_delivered message,
