@@ -66,7 +66,10 @@
                  known_senders,
 
                  %% Master depth - local depth
-                 depth_delta
+                 depth_delta,
+
+                 %% Promote Synchronized Slaves flag
+                 pss
                }).
 
 %%----------------------------------------------------------------------------
@@ -122,6 +125,8 @@ handle_go(Q = #amqqueue{name = QName}) ->
             Q1 = Q #amqqueue { pid = QPid },
             _ = BQ:delete_crashed(Q), %% For crash recovery
             BQS = bq_init(BQ, Q1, new),
+            {ok, PSS} =
+                application:get_env(rabbit, promote_only_sync_slaves),
             State = #state { q                   = Q1,
                              gm                  = GM,
                              backing_queue       = BQ,
@@ -135,7 +140,8 @@ handle_go(Q = #amqqueue{name = QName}) ->
                              msg_id_status       = dict:new(),
                              known_senders       = pmon:new(delegate),
 
-                             depth_delta         = undefined
+                             depth_delta         = undefined,
+                             pss                 = PSS
                    },
             ok = gm:broadcast(GM, request_depth),
             ok = gm:validate_members(GM, [GM | [G || {G, _} <- GMPids]]),
@@ -200,9 +206,11 @@ handle_call(go, _From, {not_started, Q} = NotStarted) ->
 
 handle_call({gm_deaths, DeadGMPids}, From,
             State = #state { gm = GM, q = Q = #amqqueue {
-                                                 name = QName, pid = MPid }}) ->
+                                                 name = QName, pid = MPid },
+                             pss= PSS }) ->
     Self = self(),
-    case rabbit_mirror_queue_misc:remove_from_queue(QName, Self, DeadGMPids) of
+    case rabbit_mirror_queue_misc:remove_from_queue(
+             QName, Self, DeadGMPids, PSS) of
         {error, not_found} ->
             gen_server2:reply(From, ok),
             {stop, normal, State};

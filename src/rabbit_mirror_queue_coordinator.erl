@@ -33,7 +33,8 @@
                  gm,
                  monitors,
                  death_fun,
-                 depth_fun
+                 depth_fun,
+                 pss
                }).
 
 -spec start_link
@@ -334,11 +335,13 @@ init([#amqqueue { name = QueueName } = Q, GM, DeathFun, DepthFun]) ->
                   true = link(GM),
                   GM
           end,
+    {ok, PSS} = application:get_env(rabbit, promote_only_sync_slaves),
     {ok, #state { q          = Q,
                   gm         = GM1,
                   monitors   = pmon:new(),
                   death_fun  = DeathFun,
-                  depth_fun  = DepthFun },
+                  depth_fun  = DepthFun,
+                  pss        = PSS },
      hibernate,
      {backoff, ?HIBERNATE_AFTER_MIN, ?HIBERNATE_AFTER_MIN, ?DESIRED_HIBERNATE}}.
 
@@ -346,10 +349,11 @@ handle_call(get_gm, _From, State = #state { gm = GM }) ->
     reply(GM, State).
 
 handle_cast({gm_deaths, DeadGMPids},
-            State = #state { q  = #amqqueue { name = QueueName, pid = MPid } })
+            State = #state { q    = #amqqueue { name = QueueName, pid = MPid },
+                             pss  = PSS })
   when node(MPid) =:= node() ->
     case rabbit_mirror_queue_misc:remove_from_queue(
-           QueueName, MPid, DeadGMPids) of
+           QueueName, MPid, DeadGMPids, PSS) of
         {ok, MPid, DeadPids, ExtraNodes} ->
             rabbit_mirror_queue_misc:report_deaths(MPid, true, QueueName,
                                                    DeadPids),

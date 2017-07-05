@@ -17,7 +17,7 @@
 -module(rabbit_mirror_queue_misc).
 -behaviour(rabbit_policy_validator).
 
--export([remove_from_queue/3, on_node_up/0, add_mirrors/3,
+-export([remove_from_queue/3, remove_from_queue/4, on_node_up/0, add_mirrors/3,
          report_deaths/4, store_updated_slaves/1,
          initial_queue_node/2, suggested_queue_nodes/1,
          is_mirrored/1, update_mirrors/2, update_mirrors/1, validate_policy/1,
@@ -73,19 +73,26 @@
 
 %% Returns {ok, NewMPid, DeadPids, ExtraNodes}
 remove_from_queue(QueueName, Self, DeadGMPids) ->
+    remove_from_queue(QueueName, Self, DeadGMPids, false).
+
+remove_from_queue(QueueName, Self, DeadGMPids, PSS) ->
     rabbit_misc:execute_mnesia_transaction(
       fun () ->
               %% Someone else could have deleted the queue before we
               %% get here. Or, gm group could've altered. see rabbitmq-server#914
               case mnesia:read({rabbit_queue, QueueName}) of
                   [] -> {error, not_found};
-                  [Q = #amqqueue { pid        = QPid,
-                                   slave_pids = SPids,
-                                   gm_pids    = GMPids }] ->
+                  [Q = #amqqueue { pid             = QPid,
+                                   slave_pids      = SPids0,
+                                   sync_slave_pids = SSPids,
+                                   gm_pids         = GMPids }] ->
                       {DeadGM, AliveGM} = lists:partition(
                                             fun ({GM, _}) ->
                                                     lists:member(GM, DeadGMPids)
                                             end, GMPids),
+                      SPids = if PSS  -> SSPids;
+                                 true -> SPids0
+                              end,
                       DeadPids  = [Pid || {_GM, Pid} <- DeadGM],
                       AlivePids = [Pid || {_GM, Pid} <- AliveGM],
                       Alive     = [Pid || Pid <- [QPid | SPids],
@@ -118,7 +125,7 @@ remove_from_queue(QueueName, Self, DeadGMPids) ->
                                   %% master we need to sync and then
                                   %% shut it down. So let's check if
                                   %% the new master needs to sync.
-                                  maybe_auto_sync(Q1),
+                                  maybe_auto_sync(Q1, PSS),
                                   slaves_to_start_on_failure(Q1, DeadGMPids);
                           _ ->
                                   %% Master has changed, and we're not it.
@@ -364,7 +371,11 @@ actual_queue_nodes(#amqqueue{pid             = MPid,
          _    -> node(MPid)
      end, Nodes(SPids), Nodes(SSPids)}.
 
-maybe_auto_sync(Q = #amqqueue{pid = QPid}) ->
+maybe_auto_sync(Q) ->
+    maybe_auto_sync(Q, false).
+
+maybe_auto_sync(_Q,                     true) -> ok;
+maybe_auto_sync(Q = #amqqueue{pid = QPid}, _) ->
     case policy(<<"ha-sync-mode">>, Q) of
         <<"automatic">> ->
             spawn(fun() -> rabbit_amqqueue:sync_mirrors(QPid) end);
