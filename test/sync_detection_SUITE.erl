@@ -32,7 +32,9 @@ all() ->
 groups() ->
     [
       {cluster_size_2, [], [
-          slave_synchronization
+          slave_synchronization,
+          slave_synchronization_strict_promotion_false,
+	  slave_synchronization_strict_promotion_true
         ]},
       {cluster_size_3, [], [
           slave_synchronization_ttl
@@ -58,7 +60,12 @@ init_per_group(cluster_size_3, Config) ->
 end_per_group(_, Config) ->
     Config.
 
+init_per_testcase(Testcase = slave_synchronization_strict_promotion_true, Config) ->
+    common_setup(Testcase, Config, [{promote_only_sync_slaves, true}]);
 init_per_testcase(Testcase, Config) ->
+    common_setup(Testcase, Config, []).
+
+common_setup(Testcase, Config, EnvVariables) ->
     rabbit_ct_helpers:testcase_started(Config, Testcase),
     ClusterSize = ?config(rmq_nodes_count, Config),
     TestNumber = rabbit_ct_helpers:testcase_number(Config, ?MODULE, Testcase),
@@ -68,12 +75,13 @@ init_per_testcase(Testcase, Config) ->
         {rmq_nodename_suffix, Testcase},
         {tcp_ports_base, {skip_n_nodes, TestNumber * ClusterSize}}
       ]),
-    rabbit_ct_helpers:run_steps(Config1,
+    Config2 = rabbit_ct_helpers:merge_app_env(Config1, {rabbit, EnvVariables}),
+    rabbit_ct_helpers:run_steps(Config2,
       rabbit_ct_broker_helpers:setup_steps() ++
       rabbit_ct_client_helpers:setup_steps() ++ [
         fun rabbit_ct_broker_helpers:set_ha_policy_two_pos/1,
         fun rabbit_ct_broker_helpers:set_ha_policy_two_pos_batch_sync/1
-      ]).
+						]).
 
 end_per_testcase(Testcase, Config) ->
     Config1 = rabbit_ct_helpers:run_steps(Config,
@@ -195,46 +203,162 @@ slave_synchronization_ttl(Config) ->
 
     ok.
 
-send_dummy_message(Channel, Queue) ->
-    Payload = <<"foo">>,
-    Publish = #'basic.publish'{exchange = <<>>, routing_key = Queue},
-    amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload}).
+slave_synchronization_strict_promotion_false(Config) ->
+    [Master, Mirror] =
+        rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
+    Channel = rabbit_ct_client_helpers:open_channel(Config, Master),
+    QueueName = <<"ha.two.test">>,
+    #'queue.declare_ok'{} =
+        amqp_channel:call(Channel, #'queue.declare'{queue       = QueueName,
+						    auto_delete = false,
+						    durable     = true}),
 
-slave_pids(Node, Queue) ->
-    {ok, Q} = rpc:call(Node, rabbit_amqqueue, lookup,
-                       [rabbit_misc:r(<<"/">>, queue, Queue)]),
+    lists:foreach(fun(_N)-> send_dummy_message(Channel, QueueName) end,
+		  lists:seq(1, 10000)),
+
+    ok = rabbit_ct_broker_helpers:stop_broker(Config, Master),
+
+    true = ensure_promotion(Mirror, QueueName),
+
+    ok = rabbit_ct_broker_helpers:start_broker(Config, Master),
+
+    slave_unsynced(Master, QueueName),
+    {ok, NewQueueMaster} = rpc:call(Mirror, rabbit_queue_master_location_misc,
+				    lookup_master, [QueueName, <<"/">>]),
+    NewQueueMaster = Mirror,
+    slave_unsynced(NewQueueMaster, QueueName),
+    rpc:call(NewQueueMaster, rabbit_amqqueue, sync_mirrors,
+	     [get_queue_pid(QueueName, NewQueueMaster)]),
+    slave_synced(NewQueueMaster, QueueName).
+
+
+slave_synchronization_strict_promotion_true(Config) ->
+    [Master, Mirror] =
+        rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
+    Channel = rabbit_ct_client_helpers:open_channel(Config, Master),
+    QueueName = <<"ha.two.test">>,
+    #'queue.declare_ok'{} =
+        amqp_channel:call(Channel, #'queue.declare'{queue       = QueueName,
+						    auto_delete = false,
+						    durable     = true}),
+
+    send_dummy_message(Channel, QueueName),
+    {#'basic.get_ok'{delivery_tag = _Tag1}, _} =
+        amqp_channel:call(Channel, #'basic.get'{queue = QueueName}),
+
+    lists:foreach(fun(_N)-> send_dummy_message(Channel, QueueName, 2) end,
+		  lists:seq(1, 10000)),
+
+    %% ====== A tweak to enforce the mirror to be out-of-sync with the master. ======
+    %% Compile and transfer the test suite code to the mirror node. This is needed
+    %% inorder for the fun() inside the following rpc:multicall/4 to be available for
+    %% remote execution. Otherwise the rpc:multicall/4 fails.
+    {Module, Binary, Filename} = code:get_object_code(?MODULE),
+    {[{module, ?MODULE}, {module, ?MODULE}], []} =
+	rpc:multicall([Master, Mirror], code, load_binary, [Module, Filename, Binary]),
+
+    %% Enforce both the master and mirror to believe none of the mirror(s)
+    %% are in sync with the master.
+    {[ok, ok], []} = rpc:multicall([Master, Mirror], rabbit_misc,
+				   execute_mnesia_transaction,
+				   [fun()->
+					    QueueKey = rabbit_misc:r(<<"/">>, queue, QueueName),
+					    [QueueRec] = mnesia:read({rabbit_queue, QueueKey}),
+					    UpdatedQueueRec = QueueRec#amqqueue{sync_slave_pids = []},
+					    mnesia:write(rabbit_queue, UpdatedQueueRec, write),
+					    ok
+				    end]),
+    %% ====== completion of the tweak =================================================
+
+    rabbit_ct_broker_helpers:stop_broker(Config, Master),
+    false = ensure_promotion(Mirror, QueueName),
+    rabbit_ct_broker_helpers:start_broker(Config, Master),
+
+    slave_unsynced(Master, QueueName),
+    true = (get_queue_messages(Master, QueueName) >= get_queue_messages(Mirror, QueueName)),
+    false = ensure_promotion(Mirror, QueueName),
+    rpc:call(Master, rabbit_amqqueue, sync_mirrors, [get_queue_pid(QueueName, Master)]),
+    true = (get_queue_messages(Master, QueueName) =:= get_queue_messages(Mirror, QueueName)),
+
+    slave_synced(Master, QueueName),
+    QueueMasterNodeAtMirror = get_queue_master_node(Mirror, QueueName),
+    QueueMasterNodeAtMaster = get_queue_master_node(Master, QueueName),
+    QueueMasterNodeAtMaster = QueueMasterNodeAtMirror = Master.
+
+
+%% ======= Internal functions ======================================
+get_queue_pid(QueueName, Node) ->
+    AllQueues = rpc:call(Node, rabbit_amqqueue, list, []),
+    [QueuePid] = lists:foldl(fun(#amqqueue{pid = QPid} = Queue, Acc)->
+				     {resource, _, queue, QName} = Queue#amqqueue.name,
+				     case QName =:= QueueName of
+					 true -> [QPid | Acc];
+					 false -> Acc
+				     end
+			     end,
+			     [], AllQueues),
+    QueuePid.
+
+ensure_promotion(Node, QueueName) ->
+    lists:foldl(fun(_N, _Acc)->
+			timer:sleep(?LOOP_RECURSION_DELAY),
+			QueueMasterNode = get_queue_master_node(Node, QueueName),
+			QueueMasterNode =:= Node
+		end,
+		false, lists:seq(1, 50)).
+
+get_queue_master_node(Node, QueueName) ->
+    {ok, QueueMasterNode} = rpc:call(Node, rabbit_queue_master_location_misc,
+				     lookup_master, [QueueName, <<"/">>]),
+    QueueMasterNode.
+
+send_dummy_message(Channel, QueueName) ->
+    Payload = <<"foo">>,
+    Publish = #'basic.publish'{exchange = <<>>, routing_key = QueueName},
+    amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload}).
+send_dummy_message(Channel, QueueName, Mode) ->
+    Payload = <<"foo">>,
+    Publish = #'basic.publish'{exchange = <<>>, routing_key = QueueName},
+    amqp_channel:cast(Channel, Publish, #amqp_msg{payload = Payload,
+						  props = #'P_basic'
+						  {delivery_mode=Mode}}).
+
+slave_synced(Node, QueueName) ->
+    wait_for_sync_status(true, Node, QueueName).
+
+slave_unsynced(Node, QueueName) ->
+    wait_for_sync_status(false, Node, QueueName).
+
+%% The mnesia synchronization takes a while, but we don't want to wait for the
+%% test to fail, since the timetrap is quite high.
+wait_for_sync_status(Status, Node, QueueName) ->
+    Max = 10000 / ?LOOP_RECURSION_DELAY,
+    wait_for_sync_status(0, Max, Status, Node, QueueName).
+
+wait_for_sync_status(N, Max, Status, Node, QueueName) when N >= Max ->
+    erlang:error({sync_status_max_tries_failed,
+                  [{queue, QueueName},
+                   {node, Node},
+                   {expected_status, Status},
+                   {max_tried, Max}]});
+wait_for_sync_status(N, Max, Status, Node, QueueName) ->
+    SyncedSlavePids = synchronised_slave_pids(Node, QueueName),
+    Synced = length(SyncedSlavePids) =:= 1,
+    case Synced =:= Status of
+        true  -> ok;
+        false -> timer:sleep(?LOOP_RECURSION_DELAY),
+                 wait_for_sync_status(N + 1, Max, Status, Node, QueueName)
+    end.
+
+synchronised_slave_pids(Node, QueueName) ->
+    {ok, Queue} = rpc:call(Node, rabbit_amqqueue, lookup,
+                       [rabbit_misc:r(<<"/">>, queue, QueueName)]),
     SSP = synchronised_slave_pids,
-    [{SSP, Pids}] = rpc:call(Node, rabbit_amqqueue, info, [Q, [SSP]]),
+    [{SSP, Pids}] = rpc:call(Node, rabbit_amqqueue, info, [Queue, [SSP]]),
     case Pids of
         '' -> [];
         _  -> Pids
     end.
-
-%% The mnesia synchronization takes a while, but we don't want to wait for the
-%% test to fail, since the timetrap is quite high.
-wait_for_sync_status(Status, Node, Queue) ->
-    Max = 10000 / ?LOOP_RECURSION_DELAY,
-    wait_for_sync_status(0, Max, Status, Node, Queue).
-
-wait_for_sync_status(N, Max, Status, Node, Queue) when N >= Max ->
-    erlang:error({sync_status_max_tries_failed,
-                  [{queue, Queue},
-                   {node, Node},
-                   {expected_status, Status},
-                   {max_tried, Max}]});
-wait_for_sync_status(N, Max, Status, Node, Queue) ->
-    Synced = length(slave_pids(Node, Queue)) =:= 1,
-    case Synced =:= Status of
-        true  -> ok;
-        false -> timer:sleep(?LOOP_RECURSION_DELAY),
-                 wait_for_sync_status(N + 1, Max, Status, Node, Queue)
-    end.
-
-slave_synced(Node, Queue) ->
-    wait_for_sync_status(true, Node, Queue).
-
-slave_unsynced(Node, Queue) ->
-    wait_for_sync_status(false, Node, Queue).
 
 wait_for_messages(Queue, Channel, N) ->
     Sub = #'basic.consume'{queue = Queue},
@@ -250,3 +374,19 @@ wait_for_messages(Queue, Channel, N) ->
                  end
       end, lists:seq(1, N)),
     amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = CTag}).
+
+slave_pids(Node, QueueName) ->
+    {ok, Queue} = rpc:call(Node, rabbit_amqqueue, lookup,
+                       [rabbit_misc:r(<<"/">>, queue, QueueName)]),
+    SSP = slave_pids,
+    [{SSP, Pids}] = rpc:call(Node, rabbit_amqqueue, info, [Queue, [SSP]]),
+    case Pids of
+        '' -> [];
+        _  -> Pids
+    end.
+
+get_queue_messages(Node, QueueName) ->
+    {ok, Queue} = rpc:call(Node, rabbit_amqqueue, lookup,
+                       [rabbit_misc:r(<<"/">>, queue, QueueName)]),
+    [{messages, Messages}] = rpc:call(Node, rabbit_amqqueue, info, [Queue, [messages]]),
+    Messages.
