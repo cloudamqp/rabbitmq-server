@@ -312,6 +312,7 @@ start_connection(Parent, HelperSup, Deb, Sock) ->
                                     rabbit_net:fast_close(RealSocket),
                                     exit(normal)
            end,
+    maybe_write_keylog(Sock, Name),
     {ok, HandshakeTimeout} = application:get_env(rabbit, handshake_timeout),
     InitialFrameMax = application:get_env(rabbit, initial_frame_max, ?FRAME_MIN_SIZE),
     erlang:send_after(HandshakeTimeout, self(), handshake_timeout),
@@ -1808,3 +1809,20 @@ get_client_value_detail(channel_max, 0) ->
     " (no limit)";
 get_client_value_detail(_Field, _ClientValue) ->
     "".
+
+-spec maybe_write_keylog(rabbit_net:socket(), binary()) -> any().
+maybe_write_keylog(Socket, Name) ->
+    case application:get_env(rabbit, ssl_key_log_file) of
+        {ok, File} ->
+            case rabbit_net:ssl_info(Socket, [keylog]) of
+                {ok, [{keylog, KeylogItems}]} ->
+                    Content =
+                        [ "# ", Name |
+                        [ [Item, $\n] || Item <- KeylogItems ]],
+                    file:write_file(File, Content, [append]);
+                _ ->
+                    ok
+            end;
+        _ ->
+            ok
+    end.
