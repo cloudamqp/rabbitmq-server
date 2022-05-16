@@ -509,7 +509,7 @@ get_data({_, Data}) ->
     Data.
 
 get_path_prefix() ->
-    EnvPrefix = rabbit_misc:get_env(rabbitmq_management, path_prefix, ""),
+    EnvPrefix = application:get_env(rabbitmq_management, path_prefix, ""),
     fixup_prefix(EnvPrefix).
 
 fixup_prefix("") ->

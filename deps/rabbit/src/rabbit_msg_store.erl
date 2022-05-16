@@ -466,7 +466,7 @@ client_init(Server, Ref, MsgOnDiskFun, CloseFDsFun) when is_pid(Server); is_atom
         gen_server2:call(
           Server, {new_client_state, Ref, self(), MsgOnDiskFun, CloseFDsFun},
           infinity),
-    CreditDiscBound = rabbit_misc:get_env(rabbit, msg_store_credit_disc_bound,
+    CreditDiscBound = application:get_env(rabbit, msg_store_credit_disc_bound,
                                           ?CREDIT_DISC_BOUND),
     #client_msstate { server             = Server,
                       client_ref         = Ref,
@@ -771,7 +771,7 @@ init([VHost, Type, BaseDir, ClientRefs, StartupFunState]) ->
                                 msg_store        = self()
                               }),
 
-    CreditDiscBound = rabbit_misc:get_env(rabbit, msg_store_credit_disc_bound,
+    CreditDiscBound = application:get_env(rabbit, msg_store_credit_disc_bound,
                                           ?CREDIT_DISC_BOUND),
 
     State = #msstate { dir                    = Dir,

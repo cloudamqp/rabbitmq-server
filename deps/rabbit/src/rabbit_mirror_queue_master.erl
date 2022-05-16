@@ -123,7 +123,7 @@ init_with_existing_bq(Q0, BQ, BQS) when ?is_amqqueue(Q0) ->
                seen_status         = #{},
                confirmed           = [],
                known_senders       = sets:new(),
-               wait_timeout        = rabbit_misc:get_env(rabbit, slave_wait_timeout, 15000)};
+               wait_timeout        = application:get_env(rabbit, slave_wait_timeout, 15000)};
     {error, Reason} ->
         %% The GM can shutdown before the coordinator has started up
         %% (lost membership or missing group), thus the start_link of
@@ -527,7 +527,7 @@ promote_backing_queue_state(QName, CPid, BQ, BQS, GM, AckTags, Seen, KS) ->
     Depth = BQ:depth(BQS1),
     true = Len == Depth, %% ASSERTION: everything must have been requeued
     ok = gm:broadcast(GM, {depth, Depth}),
-    WaitTimeout = rabbit_misc:get_env(rabbit, slave_wait_timeout, 15000),
+    WaitTimeout = application:get_env(rabbit, slave_wait_timeout, 15000),
     #state { name                = QName,
              gm                  = GM,
              coordinator         = CPid,

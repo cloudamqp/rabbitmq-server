@@ -1293,9 +1293,9 @@ warn_if_disc_io_options_dubious() ->
     %% if these values are not set, it doesn't matter since
     %% rabbit_variable_queue will pick up the values defined in the
     %% IO_BATCH_SIZE and CREDIT_DISC_BOUND constants.
-    CreditDiscBound = rabbit_misc:get_env(rabbit, msg_store_credit_disc_bound,
+    CreditDiscBound = application:get_env(rabbit, msg_store_credit_disc_bound,
                                           undefined),
-    IoBatchSize = rabbit_misc:get_env(rabbit, msg_store_io_batch_size,
+    IoBatchSize = application:get_env(rabbit, msg_store_io_batch_size,
                                       undefined),
     case catch validate_msg_store_io_batch_size_and_credit_disc_bound(
                  CreditDiscBound, IoBatchSize) of

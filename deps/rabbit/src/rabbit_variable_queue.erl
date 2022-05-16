@@ -498,7 +498,7 @@ explicit_gc_run_operation_threshold_for_mode(Mode) ->
         _    -> {queue_explicit_gc_run_operation_threshold,
                  ?DEFAULT_EXPLICIT_GC_RUN_OP_THRESHOLD}
     end,
-    rabbit_misc:get_env(rabbit, Key, Fallback).
+    application:get_env(rabbit, Key, Fallback).
 
 %%----------------------------------------------------------------------------
 %% Public API
@@ -624,7 +624,7 @@ process_recovery_terms(Terms) ->
 queue_version(Q) ->
     Resolve = fun(_, ArgVal) -> ArgVal end,
     case rabbit_queue_type_util:args_policy_lookup(<<"queue-version">>, Resolve, Q) of
-        undefined -> rabbit_misc:get_env(rabbit, classic_queue_default_version, 1);
+        undefined -> application:get_env(rabbit, classic_queue_default_version, 1);
         Vsn when is_integer(Vsn) -> Vsn;
         Vsn -> binary_to_integer(Vsn)
     end.
@@ -1805,7 +1805,7 @@ init(QueueVsn, IsDurable, IndexMod, IndexState, StoreState, DeltaCount, DeltaByt
                                     end_seq_id   = NextSeqId })
             end,
     Now = erlang:monotonic_time(),
-    IoBatchSize = rabbit_misc:get_env(rabbit, msg_store_io_batch_size,
+    IoBatchSize = application:get_env(rabbit, msg_store_io_batch_size,
                                       ?IO_BATCH_SIZE),
 
     {ok, IndexMaxSize} = application:get_env(
@@ -2963,7 +2963,7 @@ reduce_memory_use(State = #vqstate {
                                                 out     = AvgEgress,
                                                 ack_in  = AvgAckIngress,
                                                 ack_out = AvgAckEgress } }) ->
-    {CreditDiscBound, _} =rabbit_misc:get_env(rabbit,
+    {CreditDiscBound, _} =application:get_env(rabbit,
                                               msg_store_credit_disc_bound,
                                               ?CREDIT_DISC_BOUND),
     {NeedResumeA2B, State1} = {_, #vqstate { q2 = Q2, q3 = Q3 }} =

@@ -65,7 +65,7 @@ interval_gc(State = #state{last_interval = LastInterval}) ->
 -spec gc() -> 'ok'.
 
 gc() ->
-    Enabled = rabbit_misc:get_env(rabbit, background_gc_enabled, false),
+    Enabled = application:get_env(rabbit, background_gc_enabled, false),
     case Enabled of
         true ->
             [garbage_collect(P) || P <- processes(),

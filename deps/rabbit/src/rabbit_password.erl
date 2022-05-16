@@ -37,7 +37,7 @@ salted_hash(Mod, Salt, Cleartext) ->
     Fun(<<Salt/binary, Cleartext/binary>>).
 
 hashing_mod() ->
-    rabbit_misc:get_env(rabbit, password_hashing_module,
+    application:get_env(rabbit, password_hashing_module,
         ?DEFAULT_HASHING_MODULE).
 
 hashing_mod(rabbit_password_hashing_sha256) ->

@@ -58,7 +58,7 @@ init([PoolSize, PoolName]) ->
 -spec default_pool_size() -> integer().
 
 default_pool_size() ->
-  case rabbit_misc:get_env(rabbit, default_worker_pool_size, undefined) of
+  case application:get_env(rabbit, default_worker_pool_size, undefined) of
     N when is_integer(N) -> N;
     _                    -> guess_default_pool_size()
   end.

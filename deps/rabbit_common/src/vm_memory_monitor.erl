@@ -157,7 +157,7 @@ get_process_memory(current) ->
 
 -spec get_memory_calculation_strategy() -> memory_calculation_strategy().
 get_memory_calculation_strategy() ->
-    case rabbit_misc:get_env(rabbit, vm_memory_calculation_strategy, rss) of
+    case application:get_env(rabbit, vm_memory_calculation_strategy, rss) of
         allocated -> allocated;
         erlang -> erlang;
         legacy -> erlang; %% backwards compatibility

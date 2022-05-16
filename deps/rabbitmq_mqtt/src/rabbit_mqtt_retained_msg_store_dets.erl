@@ -50,5 +50,5 @@ open_table(Dir, VHost) ->
 table_options(Path) ->
   [{type, set}, {keypos, #retained_message.topic},
     {file, Path}, {ram_file, true}, {repair, true},
-    {auto_save, rabbit_misc:get_env(rabbit_mqtt,
+    {auto_save, application:get_env(rabbit_mqtt,
                                     retained_message_store_dets_sync_interval, 2000)}].

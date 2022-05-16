@@ -224,13 +224,13 @@
 
 -define(MAX_WAIT, 16#ffffffff).
 -define(SUPERVISOR_WAIT,
-        rabbit_misc:get_env(rabbit, supervisor_shutdown_timeout, infinity)).
+        application:get_env(rabbit, supervisor_shutdown_timeout, infinity)).
 -define(WORKER_WAIT,
-        rabbit_misc:get_env(rabbit, worker_shutdown_timeout, 300000)).
+        application:get_env(rabbit, worker_shutdown_timeout, 300000)).
 -define(MSG_STORE_WORKER_WAIT,
-        rabbit_misc:get_env(rabbit, msg_store_shutdown_timeout, 600000)).
+        application:get_env(rabbit, msg_store_shutdown_timeout, 600000)).
 -define(CLASSIC_QUEUE_WORKER_WAIT,
-        rabbit_misc:get_env(rabbit, classic_queue_shutdown_timeout, 600000)).
+        application:get_env(rabbit, classic_queue_shutdown_timeout, 600000)).
 
 -define(HIBERNATE_AFTER_MIN,        1000).
 -define(DESIRED_HIBERNATE,         10000).
@@ -268,7 +268,7 @@
 
 %% Execution timeout of connection and channel tracking operations
 -define(TRACKING_EXECUTION_TIMEOUT,
-        rabbit_misc:get_env(rabbit, tracking_execution_timeout, 5000)).
+        application:get_env(rabbit, tracking_execution_timeout, 5000)).
 
 %% 3.6, 3.7, early 3.8
 -define(LEGACY_INDEX_SEGMENT_ENTRY_COUNT, 16384).

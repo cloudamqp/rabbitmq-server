@@ -172,7 +172,7 @@ listener_started(Protocol, Listener) ->
     ok.
 
 get_env(Key, Default) ->
-    rabbit_misc:get_env(rabbitmq_web_stomp, Key, Default).
+    application:get_env(rabbitmq_web_stomp, Key, Default).
 
 get_tcp_port(Configuration) ->
     %% The 'tcp_config' option may include the port, and we already have
@@ -212,4 +212,4 @@ get_binding_address(Configuration) ->
     end.
 
 get_max_connections() ->
-  rabbit_misc:get_env(rabbitmq_web_stomp, max_connections, infinity).
+  application:get_env(rabbitmq_web_stomp, max_connections, infinity).

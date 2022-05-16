@@ -75,7 +75,6 @@
 -export([store_proc_name/1, store_proc_name/2, get_proc_name/0]).
 -export([moving_average/4]).
 -export([escape_html_tags/1, b64decode_or_throw/1]).
--export([get_env/3]).
 -export([get_channel_operation_timeout/0]).
 -export([random/1]).
 -export([rpc_call/4, rpc_call/5]).
@@ -256,7 +255,6 @@
 -spec get_proc_name() -> rabbit_types:proc_name().
 -spec moving_average(float(), float(), float(), float() | 'undefined') ->
           float().
--spec get_env(atom(), atom(), term())  -> term().
 -spec get_channel_operation_timeout() -> non_neg_integer().
 -spec random(non_neg_integer()) -> non_neg_integer().
 -spec get_gc_info(pid()) -> [any()].
@@ -1335,13 +1333,6 @@ get_proc_name() ->
             undefined;
         {_Type, Name} ->
             {ok, Name}
-    end.
-
-%% application:get_env/3 is only available in R16B01 or later.
-get_env(Application, Key, Def) ->
-    case application:get_env(Application, Key) of
-        {ok, Val} -> Val;
-        undefined -> Def
     end.
 
 get_channel_operation_timeout() ->

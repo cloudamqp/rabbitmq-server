@@ -192,4 +192,4 @@ get_max_connections() ->
   get_env(max_connections, infinity).
 
 get_env(Key, Default) ->
-    rabbit_misc:get_env(rabbitmq_web_mqtt, Key, Default).
+    application:get_env(rabbitmq_web_mqtt, Key, Default).

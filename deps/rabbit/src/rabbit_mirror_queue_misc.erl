@@ -504,7 +504,7 @@ sync_batch_size(Q) when ?is_amqqueue(Q) ->
 -define(DEFAULT_BATCH_SIZE, 4096).
 
 default_batch_size() ->
-    rabbit_misc:get_env(rabbit, mirroring_sync_batch_size,
+    application:get_env(rabbit, mirroring_sync_batch_size,
                         ?DEFAULT_BATCH_SIZE).
 
 -define(DEFAULT_MAX_SYNC_THROUGHPUT, 0).

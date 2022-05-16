@@ -501,7 +501,7 @@ init([Channel, ReaderPid, WriterPid, ConnPid, ConnName, Protocol, User, VHost,
     ?LG_PROCESS_TYPE(channel),
     ?store_proc_name({ConnName, Channel}),
     ok = pg_local:join(rabbit_channels, self()),
-    Flow = case rabbit_misc:get_env(rabbit, mirroring_flow_control, true) of
+    Flow = case application:get_env(rabbit, mirroring_flow_control, true) of
              true   -> flow;
              false  -> noflow
            end,

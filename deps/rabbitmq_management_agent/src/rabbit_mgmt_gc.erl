@@ -22,7 +22,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init(_) ->
-    Interval = rabbit_misc:get_env(rabbitmq_management_agent, metrics_gc_interval, 120000),
+    Interval = application:get_env(rabbitmq_management_agent, metrics_gc_interval, 120000),
     {ok, start_timer(#state{interval = Interval})}.
 
 handle_call(test, _From, State) ->
