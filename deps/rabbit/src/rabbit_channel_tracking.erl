@@ -33,6 +33,8 @@
          ensure_tracked_tables_for_this_node/0,
          delete_tracked_channel_user_entry/1]).
 
+-export([count_local_tracked_items_in/1]).
+
 -export([migrate_tracking_records/0]).
 
 -include_lib("rabbit_common/include/rabbit.hrl").
@@ -223,9 +225,13 @@ count_tracked_items_in(Type) ->
     end.
 
 count_tracked_items_in_ets({user, Username}) ->
-    rabbit_tracking:count_tracked_items_ets(
-      ?TRACKED_CHANNEL_TABLE_PER_USER, Username,
-      "channels of user").
+    rabbit_misc:count_rpc_all_nodes(
+      rabbit_nodes:all_running(),
+      ?MODULE, count_local_tracked_items_in, [{user, Username}]).
+
+-spec count_local_tracked_items_in({user, rabbit_types:username()}) -> non_neg_integer().
+count_local_tracked_items_in({user, Username}) ->
+    rabbit_misc:ets_read_counter(?TRACKED_CHANNEL_TABLE_PER_USER, Username).
 
 count_tracked_items_in_mnesia({user, Username}) ->
     rabbit_tracking:count_tracked_items_mnesia(

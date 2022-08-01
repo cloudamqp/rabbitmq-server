@@ -62,6 +62,8 @@
 -export([pget/2, pget/3, pupdate/3, pget_or_die/2, pmerge/3, pset/3, plmerge/2]).
 -export([format_message_queue/2]).
 -export([append_rpc_all_nodes/4, append_rpc_all_nodes/5]).
+-export([count_rpc_all_nodes/4]).
+-export([ets_read_counter/2]).
 -export([os_cmd/1]).
 -export([is_os_process_alive/1]).
 -export([gb_sets_difference/2]).
@@ -1154,6 +1156,33 @@ process_rpc_multicall_result(ResL) ->
                       %% wrap it in a list
                       Other               -> [Other]
                   end || Res <- ResL]).
+
+-spec count_rpc_all_nodes([node()], module(), atom(), [term()]) -> integer().
+count_rpc_all_nodes(Nodes, M, F, A) ->
+    ResL = erpc:multicall(Nodes, M, F, A, ?RPC_INFINITE_TIMEOUT),
+    sum_rpc_multicall_result(ResL, Nodes, {M, F, length(A)}, 0).
+
+sum_rpc_multicall_result([{ok, Int}|ResL], [_N|Nodes], MFA, Acc) when is_integer(Int) ->
+    sum_rpc_multicall_result(ResL, Nodes, MFA, Acc + Int);
+sum_rpc_multicall_result([{ok, BadValue}|ResL], [BadNode|Nodes], MFA = {M, F, A}, Acc) ->
+    rabbit_log:error("Non-integer return value from ~p:~p/~p on node ~p: ~p",
+                     [M, F, A, BadNode, BadValue]),
+    sum_rpc_multicall_result(ResL, Nodes, MFA, Acc);
+sum_rpc_multicall_result([{Class, Reason}|ResL], [BadNode|Nodes], MFA = {M, F, A}, Acc) ->
+    rabbit_log:error("Failed to execute ~p:~p/~p on node ~p: ~p:~p",
+                     [M, F, A, BadNode, Class, Reason]),
+    sum_rpc_multicall_result(ResL, Nodes, MFA, Acc);
+sum_rpc_multicall_result([], [], _MFA, Acc) ->
+    Acc.
+
+%% @doc Read counter value that is written with ets:update_counter,
+%% with a default value of zero. Assuming an entry layout of {Key, Counter}.
+-spec ets_read_counter(ets:tid(), term()) -> integer().
+ets_read_counter(Tab, Key) ->
+    case ets:lookup(Tab, Key) of
+        []         -> 0;
+        [{_, Val}] -> Val
+    end.
 
 os_cmd(Command) ->
     case os:type() of

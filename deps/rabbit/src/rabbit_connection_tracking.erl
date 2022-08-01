@@ -41,6 +41,8 @@
          tracked_connection_from_connection_state/1,
          lookup/1, count/0]).
 
+-export([count_local_tracked_items_in/1]).
+
 -export([migrate_tracking_records/0]).
 
 -include_lib("rabbit_common/include/rabbit.hrl").
@@ -226,18 +228,17 @@ count_tracked_items_in(Type) ->
     case rabbit_feature_flags:is_enabled(tracking_records_in_ets) of
         true -> count_tracked_items_in_ets(Type);
         false -> count_tracked_items_in_mnesia(Type)
-    end.    
+    end.
 
-count_tracked_items_in_ets({vhost, VirtualHost}) ->
-    rabbit_tracking:count_tracked_items_ets(
-        ?TRACKED_CONNECTION_TABLE_PER_VHOST,
-        VirtualHost,
-        "connections in vhost");
-count_tracked_items_in_ets({user, Username}) ->
-    rabbit_tracking:count_tracked_items_ets(
-        ?TRACKED_CONNECTION_TABLE_PER_USER,
-        Username,
-        "connections for user").
+count_tracked_items_in_ets(Type) ->
+    rabbit_misc:count_rpc_all_nodes(
+      rabbit_nodes:all_running(),
+      ?MODULE, count_local_tracked_items_in, [Type]).
+
+count_local_tracked_items_in({vhost, VirtualHost}) ->
+    rabbit_misc:ets_get_counter(?TRACKED_CONNECTION_TABLE_PER_VHOST, VirtualHost);
+count_local_tracked_items_in({user, Username}) ->
+    rabbit_misc:ets_get_counter(?TRACKED_CONNECTION_TABLE_PER_USER, Username).
 
 count_tracked_items_in_mnesia({vhost, VirtualHost}) ->
     rabbit_tracking:count_tracked_items_mnesia(

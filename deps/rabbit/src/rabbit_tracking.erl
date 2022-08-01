@@ -28,8 +28,8 @@
 
 -export([id/2, delete_tracked_entry/4, delete_tracked_entry_internal/4,
          clear_tracking_table/1, delete_tracking_table/3]).
--export([count_tracked_items_ets/3, match_tracked_items_ets/2]).
--export([count_tracked_items_local/2, match_tracked_items_local/2]).
+-export([match_tracked_items_ets/2]).
+-export([match_tracked_items_local/2]).
 -export([count_tracked_items_mnesia/4, match_tracked_items_mnesia/2]).
 
 %%----------------------------------------------------------------------------
@@ -39,30 +39,6 @@
 
 id(Node, Name) -> {Node, Name}.
 
--spec count_tracked_items_ets(atom(), term(), string()) ->
-    non_neg_integer().
-count_tracked_items_ets(Tab, Key, ContextMsg) ->
-    lists:foldl(fun (Node, Acc) when Node == node() ->
-                        N = count_tracked_items_local(Tab, Key),
-                        Acc + N;
-                    (Node, Acc) ->
-                        N = case rabbit_misc:rpc_call(Node, ?MODULE, count_tracked_items_local,
-                                                      [Tab, Key]) of
-                                Int when is_integer(Int) -> Int;
-                                {badrpc, Err} ->
-                                    rabbit_log:error(
-                                      "Failed to fetch number of ~p ~p on node ~p:~n~p",
-                                      [ContextMsg, Key, Node, Err]),
-                                    0
-                            end,
-                        Acc + N
-                end, 0, rabbit_nodes:all_running()).
-
-count_tracked_items_local(Tab, Key) ->
-    case ets:lookup(Tab, Key) of
-        []         -> 0;
-        [{_, Val}] -> Val
-    end.
 
 count_tracked_items_mnesia(TableNameFun, CountRecPosition, Key, ContextMsg) ->
     lists:foldl(fun (Node, Acc) ->
