@@ -1845,8 +1845,16 @@ get_default_quorum_initial_group_size(Arguments) ->
 %% member with the current leader first
 members(Q) when ?amqqueue_is_quorum(Q) ->
     {RaName, LeaderNode} = amqqueue:get_pid(Q),
-    Nodes = lists:delete(LeaderNode, get_nodes(Q)),
-    [{RaName, N} || N <- [LeaderNode | Nodes]].
+    Nodes = get_nodes(Q),
+    case lists:member(LeaderNode, Nodes) of
+        true ->
+            FollowerNodes = lists:delete(LeaderNode, Nodes),
+            [{RaName, N} || N <- [LeaderNode | FollowerNodes]];
+        false ->
+            %% LeaderNode is the last known leader but there is no
+            %% current leader
+            [{RaName, N} || N <- Nodes]
+    end.
 
 format_ra_event(ServerId, Evt, QRef) ->
     {'$gen_cast', {queue_event, QRef, {ServerId, Evt}}}.
