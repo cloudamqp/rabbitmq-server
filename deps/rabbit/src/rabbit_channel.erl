@@ -1060,6 +1060,20 @@ check_vhost_queue_limit(#resource{name = QueueName}, VHost) ->
 
   end.
 
+check_consumer_limit(ConsumerMapping) ->
+    MaxConsumers = application:get_env(rabbit, consumers_per_channel_max, infinity),
+    ConsumerCount = maps:size(ConsumerMapping),
+    if infinity =:= MaxConsumers ->
+            ok;
+       ConsumerCount >= MaxConsumers ->
+            rabbit_misc:protocol_error(
+              not_allowed,
+              "number of consumers per channel (~w) reached the maximum allowed (~w)",
+              [ConsumerCount, MaxConsumers]);
+       true ->
+            ok
+    end.
+
 qbin_to_resource(QueueNameBin, VHostPath) ->
     name_to_resource(queue, QueueNameBin, VHostPath).
 
@@ -1414,6 +1428,7 @@ handle_method(#'basic.consume'{queue        = QueueNameBin,
         error ->
             QueueName = qbin_to_resource(QueueNameBin, VHostPath),
             check_read_permitted(QueueName, User, AuthzContext),
+            check_consumer_limit(ConsumerMapping),
             ActualConsumerTag =
                 case ConsumerTag of
                     <<>>  -> rabbit_guid:binary(rabbit_guid:gen_secure(),

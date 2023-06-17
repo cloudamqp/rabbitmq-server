@@ -27,6 +27,7 @@ define PROJECT_ENV
 	    %% see rabbitmq-server#1593
 	    {channel_max, 2047},
 	    {ranch_connection_max, infinity},
+	    {consumers_per_channel_max, infinity},
 	    {heartbeat, 60},
 	    {msg_store_file_size_limit, 16777216},
 	    {msg_store_shutdown_timeout, 600000},
