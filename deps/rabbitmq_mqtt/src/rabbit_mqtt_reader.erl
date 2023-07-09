@@ -344,7 +344,7 @@ process_received_bytes(Bytes, State = #state{socket = Socket,
                            end,
                     case rabbit_mqtt_processor:init(Packet, Socket, ConnName, Send) of
                         {ok, ProcState1} ->
-                            ?LOG_INFO("Accepted MQTT connection ~ts for client ID ~ts",
+                            ?LOG_INFO("accepted MQTT connection ~ts for client ID ~ts",
                                       [ConnName, rabbit_mqtt_processor:info(client_id, ProcState1)]),
                             process_received_bytes(
                               Rest, State#state{parse_state = ParseState1,
