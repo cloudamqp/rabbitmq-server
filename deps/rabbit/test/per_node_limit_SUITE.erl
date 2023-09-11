@@ -7,11 +7,11 @@
 
 -module(per_node_limit_SUITE).
 
--include_lib("common_test/include/ct.hrl").
+%%-include_lib("common_test/include/ct.hrl").
 -include_lib("amqp_client/include/amqp_client.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 all() ->
     [
@@ -23,7 +23,8 @@ groups() ->
      {limit_tests, [], [
                         node_connection_limit,
                         vhost_limit,
-                        node_channel_limit
+                        node_channel_limit,
+                        consumers_per_channel_limit
                        ]}
     ].
 
@@ -139,6 +140,27 @@ node_channel_limit(Config) ->
     0 = count_channels_per_node(Config),
     ok.
 
+consumers_per_channel_limit(Config) ->
+    %% Set limit to 5, accept 5 consumers
+    set_node_limit(Config, consumers_per_channel_max, 5),
+
+    Server = rabbit_ct_broker_helpers:get_node_config(Config, 0, nodename),
+    {_Conn, Ch} = rabbit_ct_client_helpers:open_connection_and_channel(Config, Server),
+
+    Q = atom_to_binary(?FUNCTION_NAME, utf8),
+    {'queue.declare_ok', Q, 0, 0} =
+        amqp_channel:call(Ch, #'queue.declare'{queue = Q,
+                                               durable = true,
+                                               auto_delete = true}),
+
+    [ok = consume(Ch, Q, N) || N <- lists:seq(1, 5)],
+
+    ExpectedError = <<"NOT_ALLOWED - number of consumers per channel (5) reached the maximum allowed (5)">>,
+    ?assertExit(
+       {{shutdown, {connection_closing, {server_initiated_close, 530, ExpectedError}}}, _},
+       consume(Ch, Q, 6)),
+    ok.
+
 %% -------------------------------------------------------------------
 %% Implementation
 %% -------------------------------------------------------------------
@@ -165,6 +187,18 @@ open_channel(Conn) when is_pid(Conn) ->
     catch
       _:_Error -> {error, not_allowed_crash}
    end.
+
+consume(Ch, Q, N) ->
+    Tag1 = list_to_binary(io_lib:format("ctag~w", [N])),
+    amqp_channel:subscribe(Ch, #'basic.consume'{queue = Q,
+                                                consumer_tag = Tag1},
+                           self()),
+    receive
+        #'basic.consume_ok'{consumer_tag = Tag1} ->
+            ok
+    after 5000 ->
+            {error, timeout}
+    end.
 
 count_channels_per_node(Config)  ->
     NodeConfig = rabbit_ct_broker_helpers:get_node_config(Config, 0),
