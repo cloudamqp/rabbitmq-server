@@ -74,7 +74,7 @@ defmodule RabbitMQ.CLI.Core.Listeners do
     %{
       node: node,
       protocol: protocol,
-      interface: :inet.ntoa(interface) |> to_string |> maybe_enquote_interface,
+      interface: :rabbit_misc.ntoa(interface) |> to_string |> maybe_enquote_interface,
       port: port,
       purpose: protocol_label(to_atom(protocol))
     }

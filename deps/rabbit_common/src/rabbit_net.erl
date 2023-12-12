@@ -61,9 +61,9 @@
 -spec close(socket()) -> ok_or_any_error().
 -spec fast_close(socket()) -> ok_or_any_error().
 -spec sockname(socket()) ->
-          ok_val_or_error({inet:ip_address(), ip_port()}).
+          ok_val_or_error({inet:ip_address(), ip_port()} | {local, binary()}).
 -spec peername(socket()) ->
-          ok_val_or_error({inet:ip_address(), ip_port()}).
+          ok_val_or_error({inet:ip_address(), ip_port()} | {local, binary()}).
 -spec peercert(socket()) ->
           'nossl' | ok_val_or_error(rabbit_cert_info:certificate()).
 -spec connection_string(socket(), 'inbound' | 'outbound') ->
@@ -215,12 +215,17 @@ connection_string(Sock, Direction) ->
     case socket_ends(Sock, Direction) of
         {ok, {FromAddress, FromPort, ToAddress, ToPort}} ->
             {ok, rabbit_misc:format(
-                   "~ts:~tp -> ~ts:~tp",
-                   [maybe_ntoab(FromAddress), FromPort,
-                    maybe_ntoab(ToAddress),   ToPort])};
+                   "~ts -> ~ts",
+                   [connection_end_string(FromAddress, FromPort),
+                    connection_end_string(ToAddress, ToPort)])};
         Error ->
             Error
     end.
+
+connection_end_string(local, SocketFile) ->
+    io_lib:format("local:~ts", [SocketFile]);
+connection_end_string(Address, Port) ->
+    io_lib:format("~ts:~tp", [maybe_ntoab(Address), Port]).
 
 socket_ends(Sock, Direction) when ?IS_SSL(Sock);
     is_port(Sock) ->

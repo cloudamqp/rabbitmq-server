@@ -213,8 +213,8 @@
                  {bad_edge, [digraph:vertex()]}),
                 digraph:vertex(), digraph:vertex()}).
 -spec const(A) -> thunk(A).
--spec ntoa(inet:ip_address()) -> string().
--spec ntoab(inet:ip_address()) -> string().
+-spec ntoa(inet:ip_address() | inet:local_address()) -> string().
+-spec ntoab(inet:ip_address() | inet:local_address()) -> string().
 -spec is_process_alive(pid()) -> boolean().
 
 -spec pmerge(term(), term(), [term()]) -> [term()].
@@ -534,7 +534,7 @@ ensure_ok({error, Reason}, ErrorTag) -> throw({error, {ErrorTag, Reason}}).
 tcp_name(Prefix, IPAddress, Port)
   when is_atom(Prefix) andalso is_number(Port) ->
     list_to_atom(
-      format("~w_~ts:~w", [Prefix, inet_parse:ntoa(IPAddress), Port])).
+      format("~w_~ts:~w", [Prefix, ntoa(IPAddress), Port])).
 
 format_inet_error(E) -> format("~w (~ts)", [E, format_inet_error0(E)]).
 
@@ -835,11 +835,15 @@ const(X) -> fun () -> X end.
 
 %% Format IPv4-mapped IPv6 addresses as IPv4, since they're what we see
 %% when IPv6 is enabled but not used (i.e. 99% of the time).
+ntoa({local, SocketFile}) ->
+    "local:" ++ SocketFile;
 ntoa({0,0,0,0,0,16#ffff,AB,CD}) ->
     inet_parse:ntoa({AB bsr 8, AB rem 256, CD bsr 8, CD rem 256});
 ntoa(IP) ->
     inet_parse:ntoa(IP).
 
+ntoab({local, _} = Address) ->
+    ntoa(Address);
 ntoab(IP) ->
     Str = ntoa(IP),
     case string:str(Str, ":") of

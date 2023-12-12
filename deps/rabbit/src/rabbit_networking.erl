@@ -149,6 +149,9 @@ tcp_listener_addresses(Port) when is_integer(Port) ->
 tcp_listener_addresses({"auto", Port}) ->
     %% Variant to prevent lots of hacking around in bash and batch files
     tcp_listener_addresses_auto(Port);
+tcp_listener_addresses({local, FileName} = Address) when is_list(FileName) ->
+    %% Unix Domain socket
+    [{Address, _Port = 0, local}];
 tcp_listener_addresses({Host, Port}) ->
     %% auto: determine family IPv4 / IPv6 after converting to IP address
     tcp_listener_addresses({Host, Port, auto});
