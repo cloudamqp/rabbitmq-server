@@ -40,7 +40,7 @@
       Record :: tuple().
 upgrade_record(mirrored_sup_childspec,
                #mirrored_sup_childspec{key = {?MODULE, #exchange{} = Exchange}} = Record) ->
-    Record#mirrored_sup_childspec{key = {?MODULE, id(Exchange)}};
+    Record#mirrored_sup_childspec{key = {?MODULE, id(Exchange, _KhepriEnabled = true)}};
 upgrade_record(_Table, Record) ->
     Record.
 
@@ -48,7 +48,7 @@ upgrade_record(_Table, Record) ->
       Table :: mnesia_to_khepri:mnesia_table(),
       Key :: any().
 upgrade_key(mirrored_sup_childspec, {?MODULE, #exchange{} = Exchange}) ->
-    {?MODULE, id(Exchange)};
+    {?MODULE, id(Exchange, _KhepriEnabled = true)};
 upgrade_key(_Table, Key) ->
     Key.
 
@@ -83,12 +83,15 @@ start_child(X) ->
 
 adjust({clear_upstream, VHost, UpstreamName}) ->
     _ = [rabbit_federation_link_sup:adjust(Pid, X, {clear_upstream, UpstreamName}) ||
-            {{_, #exchange{name = Name} = X}, Pid, _, _} <- mirrored_supervisor:which_children(?SUPERVISOR),
-            Name#resource.virtual_host == VHost],
+            {Id, Pid, _, _} <- mirrored_supervisor:which_children(?SUPERVISOR),
+            begin
+                #exchange{name = Name} = X = id_to_exchange(Id),
+                Name#resource.virtual_host == VHost
+            end],
     ok;
 adjust(Reason) ->
-    _ = [rabbit_federation_link_sup:adjust(Pid, X, Reason) ||
-            {{_, X}, Pid, _, _} <- mirrored_supervisor:which_children(?SUPERVISOR)],
+    _ = [rabbit_federation_link_sup:adjust(Pid, id_to_exchange(Id), Reason) ||
+            {Id, Pid, _, _} <- mirrored_supervisor:which_children(?SUPERVISOR)],
     ok.
 
 stop_child(X) ->
@@ -111,7 +114,20 @@ init([]) ->
 %% See comment in rabbit_federation_queue_link_sup_sup:id/1
 id(X = #exchange{policy = Policy}) ->
     X1 = rabbit_exchange:immutable(X),
-    {simple_id(X), X1#exchange{policy = Policy}}.
+    X2 = X1#exchange{policy = Policy},
+    id(X2, rabbit_khepri:is_enabled()).
+
+id(X, _KhepriEnabled = true) ->
+    {simple_id(X), X};
+id(X, _KhepriEnabled = false) ->
+    %% Old child id format before migration to Khepri
+    X.
 
 simple_id(#exchange{name = #resource{virtual_host = VHost, name = Name}}) ->
     [exchange, VHost, Name].
+
+id_to_exchange({_, #exchange{} = X}) ->
+    X;
+id_to_exchange(#exchange{} = X) ->
+    %% Old child id format before migration to Khepri
+    X.
