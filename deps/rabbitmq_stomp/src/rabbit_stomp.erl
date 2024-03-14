@@ -15,7 +15,7 @@
 -export([connection_info_local/1,
          emit_connection_info_local/3,
          emit_connection_info_all/4,
-         list/0,
+         list_local_stomp_connections/0,
          close_all_client_connections/1]).
 
 -define(DEFAULT_CONFIGURATION,
@@ -41,7 +41,7 @@ stop(_) ->
 
 -spec close_all_client_connections(string() | binary()) -> {'ok', non_neg_integer()}.
 close_all_client_connections(Reason) ->
-     Connections = list(),
+    Connections = list_local_stomp_connections(),
     [rabbit_stomp_reader:close_connection(Pid, Reason) || Pid <- Connections],
     {ok, length(Connections)}.
 
@@ -57,10 +57,10 @@ emit_connection_info_local(Items, Ref, AggregatorPid) ->
       AggregatorPid, Ref, fun(Pid) ->
                                   rabbit_stomp_reader:info(Pid, Items)
                           end,
-      list()).
+      list_local_stomp_connections()).
 
 connection_info_local(Items) ->
-    Connections = list(),
+    Connections = list_local_stomp_connections(),
     [rabbit_stomp_reader:info(Pid, Items) || Pid <- Connections].
 
 parse_listener_configuration() ->
@@ -113,12 +113,12 @@ report_configuration(#stomp_configuration{
 
     ok.
 
-list() ->
+list_local_stomp_connections() ->
+    PlainPids = rabbit_networking:list_local_connections_of_protocol(?STOMP_TCP_PROTOCOL),
+    TLSPids   = rabbit_networking:list_local_connections_of_protocol(?STOMP_TLS_PROTOCOL),
+    AllPids = PlainPids ++ TLSPids,
     [Client ||
-        {_, ListSup, _, _} <- supervisor:which_children(rabbit_stomp_sup),
-        {_, RanchEmbeddedSup, supervisor, _} <- supervisor:which_children(ListSup),
-        {{ranch_listener_sup, _}, RanchListSup, _, _} <- supervisor:which_children(RanchEmbeddedSup),
-        {ranch_conns_sup_sup, RanchConnsSup, supervisor, _} <- supervisor:which_children(RanchListSup),
-        {_, RanchConnSup, supervisor, _} <- supervisor:which_children(RanchConnsSup),
-        {_, StompClientSup, supervisor, _} <- supervisor:which_children(RanchConnSup),
-        {rabbit_stomp_reader, Client, _, _} <- supervisor:which_children(StompClientSup)].
+        StompSupervisor <- AllPids,
+        {rabbit_stomp_reader, Client, _, _} <- 
+            supervisor:which_children(StompSupervisor)               
+    ].

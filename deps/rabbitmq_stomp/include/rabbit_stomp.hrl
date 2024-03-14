@@ -12,6 +12,8 @@
                               ssl_cert_login}).
 
 -define(SUPPORTED_VERSIONS, ["1.0", "1.1", "1.2"]).
+-define(STOMP_TCP_PROTOCOL, 'stomp').
+-define(STOMP_TLS_PROTOCOL, 'stomp/ssl').
 
 -define(INFO_ITEMS,
         [conn_name,
