@@ -132,7 +132,7 @@ stats(Config) ->
     {ok, Client} = rabbit_stomp_client:connect(StompPort),
     timer:sleep(1000), %% Wait for stats to be emitted, which it does every 100ms
     %% Retrieve the connection Pid
-    [Reader] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_stomp, list, []),
+    [Reader] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_stomp, list_local_stomp_connections, []),
     [{_, Pid}] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_stomp_reader,
                                               info, [Reader, [connection]]),
     %% Verify the content of the metrics, garbage_collection must be present
@@ -152,7 +152,7 @@ heartbeat(Config) ->
                                                [{"heart-beat", "5000,7000"}]),
     timer:sleep(1000), %% Wait for stats to be emitted, which it does every 100ms
     %% Retrieve the connection Pid
-    [Reader] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_stomp, list, []),
+    [Reader] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_stomp, list_local_stomp_connections, []),
     [{_, Pid}] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_stomp_reader,
                                               info, [Reader, [connection]]),
     %% Verify the content of the heartbeat timeout
