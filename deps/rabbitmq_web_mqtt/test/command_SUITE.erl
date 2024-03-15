@@ -11,7 +11,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("amqp_client/include/amqp_client.hrl").
 -include_lib("rabbitmq_mqtt/include/rabbit_mqtt.hrl").
--import(util, [connect/3, connect/4]).
+-import(rabbit_web_mqtt_test_util, [connect/3, connect/4]).
 
 -define(COMMAND, 'Elixir.RabbitMQ.CLI.Ctl.Commands.ListWebMqttConnectionsCommand').
 
@@ -54,8 +54,7 @@ end_per_suite(Config) ->
 init_per_group(unit, Config) ->
     Config;
 init_per_group(Group, Config) ->
-    Config1 = rabbit_ct_helpers:set_config(Config, {mqtt_version, Group}),
-    util:maybe_skip_v5(Config1).
+    rabbit_ct_helpers:set_config(Config, {mqtt_version, Group}).
 
 end_per_group(_, Config) ->
     Config.
