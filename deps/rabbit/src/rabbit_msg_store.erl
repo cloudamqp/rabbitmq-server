@@ -1446,6 +1446,15 @@ scan_data(<<Size:64, MsgIdAndMsg:Size/binary, 255, Rest/bits>> = Data,
                       [{MsgId, TotalSize, Offset}|Acc])
     end;
 %% This might be the start of a message.
+scan_data(<<Size:64, MsgIdInt:128, Rest/bits>> = Data, Fd, Offset, FileSize, MsgIdsFound, Acc)
+          when byte_size(Rest) < Size - 16 + 1, Size < FileSize - Offset ->
+    RemainingBodySize = Size - 16 - byte_size(Rest),
+    case RemainingBodySize + 1 > ?SCAN_BLOCK_SIZE of
+        true ->
+            skip_body(Size, MsgIdInt, RemainingBodySize, Fd, Offset, FileSize, MsgIdsFound, Acc, Data);
+        false ->
+            scan(Data, Fd, Offset, FileSize, MsgIdsFound, Acc)
+    end;
 scan_data(<<Size:64, Rest/bits>> = Data, Fd, Offset, FileSize, MsgIdsFound, Acc)
           when byte_size(Rest) < Size + 1, Size < FileSize - Offset ->
     scan(Data, Fd, Offset, FileSize, MsgIdsFound, Acc);
@@ -1455,6 +1464,26 @@ scan_data(Data, Fd, Offset, FileSize, MsgIdsFound, Acc)
 %% This is definitely not a message. Try the next byte.
 scan_data(<<_, Rest/bits>>, Fd, Offset, FileSize, MsgIdsFound, Acc) ->
     scan_data(Rest, Fd, Offset + 1, FileSize, MsgIdsFound, Acc).
+
+skip_body(Size, MsgIdInt, RemainingBodySize, Fd, Offset, FileSize, MsgIdsFound, Acc, Data) ->
+    {ok, _} = file:position(Fd, {cur, RemainingBodySize}),
+    %% read cannot return eof as skip_body is only called if remaining
+    %% body size is less than remaining file size
+    case file:read(Fd, ?SCAN_BLOCK_SIZE) of
+        {ok, <<255, Rest/bits>>} ->
+            %% Avoid sub-binary construction.
+            MsgId = <<MsgIdInt:128>>,
+            TotalSize = Size + 9,
+            scan_data(Rest, Fd, Offset + TotalSize, FileSize,
+                      MsgIdsFound#{MsgIdInt => true},
+                      [{MsgId, TotalSize, Offset}|Acc]);
+        {ok, _} ->
+            %% FIXME reset file position - does this work? is this too expensive?
+            {ok, _} = file:position(Fd, {cur, - RemainingBodySize}),
+
+            <<_, Rest2/bits>> = Data,
+            scan_data(Rest2, Fd, Offset + 1, FileSize, MsgIdsFound, Acc)
+    end.
 
 %%----------------------------------------------------------------------------
 %% index
