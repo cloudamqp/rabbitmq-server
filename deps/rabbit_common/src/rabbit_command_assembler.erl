@@ -77,30 +77,18 @@ process({method, MethodName, FieldsBin}, {method, Protocol}) ->
         end
     catch exit:#amqp_error{} = Reason -> {error, Reason}
     end;
-process({method, MethodName, FieldsBin},
-        {content_header, ExpectedMethod, _ClassId, Protocol}) ->
+process({method, MethodName = 'channel.close', FieldsBin},
+        {content_header, _ExpectedMethod, _ClassId, Protocol}) ->
     try
-        case Protocol:method_has_content(MethodName) of
-            true ->
-                unexpected_frame("expected content body, "
-                                 "got non content body frame instead", [], ExpectedMethod);
-            false ->
-                Method = Protocol:decode_method_fields(MethodName, FieldsBin),
-                {ok, Method, {method, Protocol}}
-        end
+        Method = Protocol:decode_method_fields(MethodName, FieldsBin),
+        {ok, Method, {method, Protocol}}
     catch exit:#amqp_error{} = Reason -> {error, Reason}
     end;
-process({method, MethodName, FieldsBin},
-        {content_body, ExpectedMethod, _RemainingSize, _Content, Protocol}) ->
+process({method, MethodName = 'channel.close', FieldsBin},
+        {content_body, _ExpectedMethod, _RemainingSize, _Content, Protocol}) ->
     try
-        case Protocol:method_has_content(MethodName) of
-            true ->
-                unexpected_frame("expected content body, "
-                                 "got non content body frame instead", [], ExpectedMethod);
-            false ->
-                Method = Protocol:decode_method_fields(MethodName, FieldsBin),
-                {ok, Method, {method, Protocol}}
-        end
+        Method = Protocol:decode_method_fields(MethodName, FieldsBin),
+        {ok, Method, {method, Protocol}}
     catch exit:#amqp_error{} = Reason -> {error, Reason}
     end;
 process(_Frame, {method, _Protocol}) ->
