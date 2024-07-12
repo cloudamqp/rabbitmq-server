@@ -61,6 +61,7 @@ groups() ->
                                      queue_exchange_metrics_per_object_test,
                                      queue_metrics_per_object_test,
                                      queue_consumer_count_and_queue_metrics_mutually_exclusive_test,
+                                     exchange_metrics_per_object_test,
                                      vhost_status_metric,
                                      exchange_bindings_metric,
                                      exchange_names_metric
@@ -304,7 +305,17 @@ end_per_group_(Config) ->
     inets:stop(),
     rabbit_ct_helpers:run_teardown_steps(Config, rabbit_ct_client_helpers:teardown_steps()
                                          ++ rabbit_ct_broker_helpers:teardown_steps()).
-
+init_per_testcase(Testcase, Config)
+    when Testcase =:= queue_counter_metrics_per_object_test;
+         Testcase =:= queue_exchange_metrics_per_object_test;
+         Testcase =:= exchange_metrics_per_object_test ->
+    case rabbit_ct_helpers:is_mixed_versions() of
+        false ->
+            rabbit_ct_helpers:testcase_started(Config, Testcase);
+        true ->
+            %% skip the test in mixed version mode
+            {skip, "Should not run in mixed version environments"}
+    end;
 init_per_testcase(Testcase, Config) ->
     rabbit_ct_helpers:testcase_started(Config, Testcase).
 
@@ -603,8 +614,8 @@ queue_exchange_metrics_per_object_test(Config) ->
     ok.
 
 exchange_metrics_per_object_test(Config) ->
-    Expected1 = #{#{queue => "vhost-1-queue-with-consumer", vhost => "vhost-1"} => [7]},
-
+    Expected1 = #{#{exchange => "vhost-1-queue-with-consumer-direct-exchange", vhost => "vhost-1"} => [7]},
+    
     {_, Body} = http_get_with_pal(Config,
                                    "/metrics/detailed?vhost=vhost-1&family=exchange_metrics",
                                    [], 200),

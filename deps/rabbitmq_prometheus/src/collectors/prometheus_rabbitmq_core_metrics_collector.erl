@@ -211,19 +211,6 @@
 
     {channel_queue_exchange_metrics, [
         {2, undefined, queue_messages_published_total, counter, "Total number of messages published into a queue through a exchange on a channel"}
-    ]}
-]).
-
-%% Metrics that can be only requested through `/metrics/detailed`
--define(METRICS_CLUSTER,[
-    {vhost_status, [
-        {2, undefined, vhost_status, gauge, "Whether a given vhost is running"}
-    ]},
-    {exchange_bindings, [
-        {2, undefined, exchange_bindings, gauge, "Number of bindings for an exchange. This value is cluster-wide."}
-    ]},
-    {exchange_names, [
-        {2, undefined, exchange_name, gauge, "Enumerates exchanges without any additional info. This value is cluster-wide. A cheaper alternative to `exchange_bindings`"}
     ]},
     {queue_exchange_metrics, [
         {2, undefined, queue_exchange_messages_published_total, counter, "Total number of messages published into a queue through an exchange"}
@@ -243,6 +230,19 @@
         {7, undefined, queue_messages_acked_total, counter, "Total number of messages acknowledged by consumers on a queue"},
         {8, undefined, queue_get_empty_total, counter, "Total number of times basic.get operations fetched no message on a queue"}
     ]}]).
+
+%% Metrics that can be only requested through `/metrics/detailed`
+-define(METRICS_CLUSTER,[
+    {vhost_status, [
+        {2, undefined, vhost_status, gauge, "Whether a given vhost is running"}
+    ]},
+    {exchange_bindings, [
+        {2, undefined, exchange_bindings, gauge, "Number of bindings for an exchange. This value is cluster-wide."}
+    ]},
+    {exchange_names, [
+        {2, undefined, exchange_name, gauge, "Enumerates exchanges without any additional info. This value is cluster-wide. A cheaper alternative to `exchange_bindings`"}
+    ]}
+]).
 
 -define(TOTALS, [
     %% ordering differs from metrics above, refer to list comprehension
