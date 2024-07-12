@@ -34,7 +34,7 @@ groups() ->
         {config_path, [], generic_tests()},
         {global_labels, [], generic_tests()},
         {aggregated_metrics, [], [
-                                  aggregated_metrics_test,
+            aggregated_metrics_test,
             specific_erlang_metrics_present_test,
             global_metrics_present_test,
             global_metrics_single_metric_family_test
@@ -57,8 +57,11 @@ groups() ->
                                      queue_consumer_count_single_vhost_per_object_test,
                                      queue_consumer_count_all_vhosts_per_object_test,
                                      queue_coarse_metrics_per_object_test,
+                                     queue_counter_metrics_per_object_test,
+                                     queue_exchange_metrics_per_object_test,
                                      queue_metrics_per_object_test,
                                      queue_consumer_count_and_queue_metrics_mutually_exclusive_test,
+                                     exchange_metrics_per_object_test,
                                      vhost_status_metric,
                                      exchange_bindings_metric,
                                      exchange_names_metric
@@ -302,7 +305,17 @@ end_per_group_(Config) ->
     inets:stop(),
     rabbit_ct_helpers:run_teardown_steps(Config, rabbit_ct_client_helpers:teardown_steps()
                                          ++ rabbit_ct_broker_helpers:teardown_steps()).
-
+init_per_testcase(Testcase, Config)
+    when Testcase =:= queue_counter_metrics_per_object_test;
+         Testcase =:= queue_exchange_metrics_per_object_test;
+         Testcase =:= exchange_metrics_per_object_test ->
+    case rabbit_ct_helpers:is_mixed_versions() of
+        false ->
+            rabbit_ct_helpers:testcase_started(Config, Testcase);
+        true ->
+            %% skip the test in mixed version mode
+            {skip, "Should not run in mixed version environments"}
+    end;
 init_per_testcase(Testcase, Config) ->
     rabbit_ct_helpers:testcase_started(Config, Testcase).
 
@@ -521,6 +534,96 @@ queue_coarse_metrics_per_object_test(Config) ->
     {_, Body3} = http_get_with_pal(Config, "/metrics/detailed?vhost=vhost-1&vhost=vhost-2&family=queue_coarse_metrics", [], 200),
     ?assertEqual(lists:foldl(fun maps:merge/2, #{}, [Expected1, Expected2]),
                  map_get(rabbitmq_detailed_queue_messages, parse_response(Body3))),
+    ok.
+
+queue_counter_metrics_per_object_test(Config) ->
+    Expected1 = #{#{queue => "vhost-1-queue-with-consumer", vhost => "vhost-1"} => [7]},
+
+    {_, Body1} = http_get_with_pal(Config,
+                                   "/metrics/detailed?vhost=vhost-1&family=queue_counter_metrics",
+                                   [], 200),
+    ?assertEqual(
+        Expected1,
+        map_get(
+            rabbitmq_detailed_queue_messages_delivered_ack_total,
+            parse_response(Body1))),
+
+    {_, Body2} = http_get_with_pal(Config,
+                                   "/metrics/detailed?vhost=vhost-2&family=queue_counter_metrics",
+                                   [], 200),
+    Expected2 = #{#{queue => "vhost-2-queue-with-consumer", vhost => "vhost-2"} => [11]},
+
+    ?assertEqual(
+        Expected2,
+        map_get(
+            rabbitmq_detailed_queue_messages_delivered_ack_total,
+            parse_response(Body2))),
+  
+    %% Maybe missing, tests for the queue_exchange_metrics
+    ok.
+
+
+queue_exchange_metrics_per_object_test(Config) ->
+    Expected1 = #{
+        #{
+            queue => "vhost-1-queue-with-messages", 
+            vhost => "vhost-1", 
+            exchange => ""
+        } => [7],
+        #{
+            exchange => "",
+            queue => "vhost-1-queue-with-consumer",
+            vhost => "vhost-1"
+        } => [7]
+    },
+
+    {_, Body1} = http_get_with_pal(Config,
+                                   "/metrics/detailed?vhost=vhost-1&family=queue_exchange_metrics",
+                                   [], 200),
+    ?assertEqual(
+        Expected1,
+        map_get(
+            rabbitmq_detailed_queue_exchange_messages_published_total,
+            parse_response(Body1))),
+
+
+    {_, Body2} = http_get_with_pal(Config,
+                                   "/metrics/detailed?vhost=vhost-2&family=queue_exchange_metrics",
+                                   [], 200),
+
+
+    Expected2 = #{
+        #{
+            queue => "vhost-2-queue-with-messages", 
+            vhost => "vhost-2", 
+            exchange => ""
+        } => [11],
+        #{
+            exchange => "",
+            queue => "vhost-2-queue-with-consumer",
+            vhost => "vhost-2"
+        } => [11]
+    },
+
+    ?assertEqual(
+        Expected2,
+        map_get(
+            rabbitmq_detailed_queue_exchange_messages_published_total,
+            parse_response(Body2))),
+   
+    ok.
+
+exchange_metrics_per_object_test(Config) ->
+    Expected1 = #{#{exchange => "vhost-1-queue-with-consumer-direct-exchange", vhost => "vhost-1"} => [7]},
+    
+    {_, Body} = http_get_with_pal(Config,
+                                   "/metrics/detailed?vhost=vhost-1&family=exchange_metrics",
+                                   [], 200),
+    ?assertEqual(
+        Expected1,
+        map_get(
+            rabbitmq_detailed_queue_messages_delivered_ack_total,
+            parse_response(Body))),
     ok.
 
 queue_metrics_per_object_test(Config) ->
