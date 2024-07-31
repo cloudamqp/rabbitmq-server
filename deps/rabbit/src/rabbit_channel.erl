@@ -2071,6 +2071,7 @@ deliver_to_queues(XName,
     Qs = rabbit_amqqueue:prepend_extra_bcc(RoutedToQueues),
     case rabbit_queue_type:deliver(Qs, Message, Options, QueueStates0) of
         {ok, QueueStates, Actions} ->
+            ok = rabbit_core_metrics:messages_stats(amqp091, element(2, mc:size(Message))),
             rabbit_global_counters:messages_routed(amqp091, length(Qs)),
             QueueNames = rabbit_amqqueue:queue_names(Qs),
             %% NB: the order here is important since basic.returns must be

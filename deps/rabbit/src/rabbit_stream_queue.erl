@@ -560,10 +560,8 @@ handle_event(QName, {osiris_written, From, _WriterId, Corrs},
                                   [Corr | Acc]
                           end, [], maps:with(Corrs, Correlation0)),
     {MsgIds0, Msgs} = lists:unzip(CorrToMsg),
-    [LargerMsgSize | _] = lists:sort(
-        fun(A, B) -> A > B end,
-        lists:map(fun(M) -> element(2,mc:size(M)) end, Msgs)),
-    rabbit_core_metrics:messages_stats(QName, LargerMsgSize),
+    MessagesSizes = lists:map(fun(M) -> element(2,mc:size(M)) end, Msgs),
+    rabbit_core_metrics:messages_stats(QName, MessagesSizes),
     MsgIds = lists:sort(MsgIds0),
     Correlation = maps:without(Corrs, Correlation0),
     {Slow, Actions0} = case maps:size(Correlation) < SftLmt of

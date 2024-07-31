@@ -378,15 +378,35 @@ build_match_spec_conditions_to_delete_all_queues([Queue|Queues]) ->
 build_match_spec_conditions_to_delete_all_queues([]) ->
     true.
 
-messages_stats(Domain, MessageSize) ->
-    CurrentMaxSize = ets:lookup_element(queue_message_metrics, Domain, 2, 0),
-    case MessageSize > CurrentMaxSize of
+messages_stats(Domain, MessagesSizes) when is_list(MessagesSizes) ->
+    [LargerMessageSize | _] = lists:sort(
+        fun(A, B) -> A > B end,
+        MessagesSizes),
+
+    CurrentMaxMsgSize = ets:lookup_element(historic_message_metrics, Domain, 2, 0),
+    case LargerMessageSize > CurrentMaxMsgSize of
         true ->
-            ets:insert(queue_message_metrics, {Domain, MessageSize}),
+            ets:insert(historic_message_metrics, {Domain, LargerMessageSize}),
             ok;
         false ->
             ok
-    end.
+    end,
+    BucketIncrsAsMap = lists:foldl(
+      fun(MessageSize, Acc) -> 
+        {value, {Bucket, _MaxSize}} = lists:search(
+            fun({_Bucket, MaxSize}) -> 
+                MessageSize =< MaxSize 
+            end,
+            ?MSG_SIZE_BUCKETS_LIMITS),
+        maps:update_with(Bucket, fun(X) -> X + 1 end, 1, Acc)
+      end,
+      #{},
+      MessagesSizes),
+    BucketIncrs = maps:to_list(BucketIncrsAsMap),
+    ets:update_counter(historic_message_sizes_metrics, Domain, BucketIncrs, ?MSG_SIZE_BUCKETS_DEFAULT),
+    ok;
+messages_stats(Domain, MessageSize) ->
+    messages_stats(Domain, [MessageSize]).
 
 node_stats(persister_metrics, Infos) ->
     ets:insert(node_persister_metrics, {node(), Infos}),

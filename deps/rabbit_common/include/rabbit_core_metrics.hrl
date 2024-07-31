@@ -32,7 +32,8 @@
 % same info as some of the channel_queue_metrics, channel_exchange_metrics and
 % channel_queue_exchange_metrics but without including the channel ID in the
 % key.
--define(CORE_NON_CHANNEL_TABLES, [{queue_message_metrics, set},
+-define(CORE_NON_CHANNEL_TABLES, [{historic_message_metrics, set},
+                                  {historic_message_sizes_metrics, set}, 
                                   {queue_delivery_metrics, set},
                                   {exchange_metrics, set},
                                   {queue_exchange_metrics, set}]).
@@ -59,3 +60,10 @@
 %% node_node_metrics :: {{node_id, node_id}, proplist}
 %% gen_server2_metrics :: {pid, buffer_length}
 %% connection_churn_metrics :: {node(), connection_created, connection_closed, channel_created, channel_closed, queue_declared, queue_created, queue_deleted}
+
+% Message metrics include the number of messages ever received for each range of possible message sizes.
+% Each possible range of sizes is refered to as a "bucket".
+% First bucket goes from 0 to 256 bytes, second from 257 to 1024 bytes, and so on.
+-define(MSG_SIZE_BUCKETS_LIMITS, [{2,256}, {3,1024}, {4, 4096}, {5, 16384}, {6,65536}, {7, 262144}, {8, 1048576}, {9, 4194304}, {10, 16777216}, {11, 67108864}, {12, 268435456}, {13, 1073741824}, {14, 4294967296}, {15, infinity}]).
+-define(MSG_SIZE_BUCKETS_DEFAULT, {'_', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}).
+
