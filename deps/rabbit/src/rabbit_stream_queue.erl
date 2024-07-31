@@ -550,16 +550,21 @@ dequeue(_, _, _, _, #stream_client{name = Name}) ->
     {protocol_error, not_implemented, "basic.get not supported by stream queues ~ts",
      [rabbit_misc:rs(Name)]}.
 
-handle_event(_QName, {osiris_written, From, _WriterId, Corrs},
+handle_event(QName, {osiris_written, From, _WriterId, Corrs},
              State0 = #stream_client{correlation = Correlation0,
                                      soft_limit = SftLmt,
                                      slow = Slow0,
                                      name = Name}) ->
-    MsgIds = lists:sort(maps:fold(
-                          fun (_Seq, {I, _M}, Acc) ->
-                                  [I | Acc]
-                          end, [], maps:with(Corrs, Correlation0))),
-
+    CorrToMsg = maps:fold(
+                          fun (_Seq, Corr, Acc) ->
+                                  [Corr | Acc]
+                          end, [], maps:with(Corrs, Correlation0)),
+    {MsgIds0, Msgs} = lists:unzip(CorrToMsg),
+    [LargerMsgSize | _] = lists:sort(
+        fun(A, B) -> A > B end,
+        lists:map(fun(M) -> element(2,mc:size(M)) end, Msgs)),
+    rabbit_core_metrics:messages_stats(QName, LargerMsgSize),
+    MsgIds = lists:sort(MsgIds0),
     Correlation = maps:without(Corrs, Correlation0),
     {Slow, Actions0} = case maps:size(Correlation) < SftLmt of
                            true when Slow0 ->

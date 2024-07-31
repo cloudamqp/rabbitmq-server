@@ -977,8 +977,11 @@ deliver(QSs, Msg0, Options) ->
     Msg = mc:prepare(store, Msg0),
     lists:foldl(
       fun({Q, stateless}, {Qs, Actions}) ->
+              QName = amqqueue:get_name(Q),
               QRef = amqqueue:get_pid(Q),
               ok = rabbit_fifo_client:untracked_enqueue([QRef], Msg),
+              {_, MsgSize} = mc:size(Msg),
+              rabbit_core_metrics:messages_stats(QName, MsgSize),
               {Qs, Actions};
          ({Q, S0}, {Qs, Actions}) ->
               QName = amqqueue:get_name(Q),
@@ -987,6 +990,8 @@ deliver(QSs, Msg0, Options) ->
                       {[{Q, S} | Qs],
                        [{rejected, QName, [Correlation]} | Actions]};
                   {ok, S, As} ->
+                      {_, MsgSize} = mc:size(Msg),
+                      rabbit_core_metrics:messages_stats(QName, MsgSize),
                       {[{Q, S} | Qs], As ++ Actions}
               end
       end, {[], []}, QSs).

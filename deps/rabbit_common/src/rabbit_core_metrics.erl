@@ -38,6 +38,8 @@
          queue_deleted/1,
          queues_deleted/1]).
 
+-export([messages_stats/2]).
+
 -export([node_stats/2]).
 
 -export([node_node_stats/2]).
@@ -92,6 +94,8 @@
 -spec queue_stats(rabbit_types:rabbit_amqqueue_name(), rabbit_types:infos()) -> ok.
 -spec queue_stats(rabbit_types:rabbit_amqqueue_name(), integer(), integer(), integer(),
                   integer()) -> ok.
+-spec messages_stats(Domain, pos_integer()) -> ok
+    when Domain :: node | rabbit_types:rabbit_amqqueue_name().
 -spec node_stats(atom(), rabbit_types:infos()) -> ok.
 -spec node_node_stats({node(), node()}, rabbit_types:infos()) -> ok.
 -spec gen_server2_stats(pid(), integer()) -> ok.
@@ -373,6 +377,16 @@ build_match_spec_conditions_to_delete_all_queues([Queue|Queues]) ->
      };
 build_match_spec_conditions_to_delete_all_queues([]) ->
     true.
+
+messages_stats(Domain, MessageSize) ->
+    CurrentMaxSize = ets:lookup_element(queue_message_metrics, Domain, 2, 0),
+    case MessageSize > CurrentMaxSize of
+        true ->
+            ets:insert(queue_message_metrics, {Domain, MessageSize}),
+            ok;
+        false ->
+            ok
+    end.
 
 node_stats(persister_metrics, Infos) ->
     ets:insert(node_persister_metrics, {node(), Infos}),
