@@ -26,7 +26,8 @@ groups() ->
         channel_metrics,
         node_metrics,
         gen_server2_metrics,
-        consumer_metrics
+        consumer_metrics,
+        historic_message_size_metrics
       ]
      }
     ].
@@ -307,6 +308,96 @@ consumer_metrics(Config) ->
 
 dead_pid() ->
     spawn(fun() -> ok end).
+
+historic_message_size_metrics(Config) ->
+    A = rabbit_ct_broker_helpers:get_node_config(Config, 0, nodename),
+    Ch = rabbit_ct_client_helpers:open_channel(Config, A),
+   
+    CQName = <<"classic_queue">>,
+    QQName = <<"quorum_queue">>,
+    SName = <<"stream_queue">>,
+    
+    CQResource = q(CQName),
+    QQResource = q(QQName),
+    SQResource = q(SName),
+
+    [] = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    
+    amqp_channel:call(Ch, #'queue.declare'{
+        queue = CQName
+    }),
+    amqp_channel:call(Ch, #'queue.declare'{
+        queue = QQName,
+        durable = true,
+        arguments = [{<<"x-queue-type">>, longstr, <<"quorum">>}]
+    }),
+    amqp_channel:call(Ch, #'queue.declare'{
+        queue = SName,
+        durable = true,
+        arguments = [{<<"x-queue-type">>, longstr, <<"stream">>}]
+    }),
+    
+    [] = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+
+
+    InsertFun = fun(QueueNames, PayloadSize) ->
+        Payload = crypto:strong_rand_bytes(PayloadSize),
+        AmqpMsg = #amqp_msg{payload = Payload},
+        
+        lists:foreach(
+            fun(QName) ->
+                ok = amqp_channel:call(
+                    Ch,
+                    #'basic.publish'{
+                        exchange = <<"">>,
+                        routing_key = QName
+                    },
+                    AmqpMsg)
+            end,
+            QueueNames),
+        timer:sleep(500)
+    end,
+    
+    % First insert
+    InsertFun([CQName, QQName, SName], 1024),
+    
+    Res0 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    {CQResource, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(CQResource, 1, Res0),
+    {QQResource, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(QQResource, 1, Res0),
+    {SQResource, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(SQResource, 1, Res0),
+    {amqp091, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(amqp091, 1, Res0),
+
+    InsertFun([CQName, QQName, SName], 8 * 1024 * 1024),
+    Res1 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    {CQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0} =
+        lists:keyfind(CQResource, 1, Res1),
+    {QQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0} =
+        lists:keyfind(QQResource, 1, Res1),
+    {SQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0} =
+        lists:keyfind(SQResource, 1, Res1),
+    {amqp091, 0, 3, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0} =
+        lists:keyfind(amqp091, 1, Res1),
+    
+    InsertFun([CQName, QQName, SName], 16 * 1024 * 1024),
+    amqp_channel:call(Ch, #'queue.delete'{queue = CQName}),
+    timer:sleep(500),
+    rabbit_ct_broker_helpers:rpc(Config, A, erlang, send, [rabbit_core_metrics_gc, start_gc]),
+
+    Res2 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    false =
+        lists:keyfind(CQResource, 1, Res2),
+    {QQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0} =
+        lists:keyfind(QQResource, 1, Res2),
+    {SQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0} =
+        lists:keyfind(SQResource, 1, Res2),
+    {amqp091, 0, 3, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0} =
+        lists:keyfind(amqp091, 1, Res2),
+
+    ok.
 
 q(Name) ->
     #resource{ virtual_host = <<"/">>,

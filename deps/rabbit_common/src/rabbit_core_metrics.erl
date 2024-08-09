@@ -378,6 +378,8 @@ build_match_spec_conditions_to_delete_all_queues([Queue|Queues]) ->
 build_match_spec_conditions_to_delete_all_queues([]) ->
     true.
 
+messages_stats(_Domain, []) ->
+    ok;
 messages_stats(Domain, MessagesSizes) when is_list(MessagesSizes) ->
     [LargerMessageSize | _] = lists:sort(
         fun(A, B) -> A > B end,
@@ -391,6 +393,7 @@ messages_stats(Domain, MessagesSizes) when is_list(MessagesSizes) ->
         false ->
             ok
     end,
+
     BucketIncrsAsMap = lists:foldl(
       fun(MessageSize, Acc) -> 
         {value, {Bucket, _MaxSize}} = lists:search(

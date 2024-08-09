@@ -64,6 +64,6 @@
 % Message metrics include the number of messages ever received for each range of possible message sizes.
 % Each possible range of sizes is refered to as a "bucket".
 % First bucket goes from 0 to 256 bytes, second from 257 to 1024 bytes, and so on.
--define(MSG_SIZE_BUCKETS_LIMITS, [{2,256}, {3,1024}, {4, 4096}, {5, 16384}, {6,65536}, {7, 262144}, {8, 1048576}, {9, 4194304}, {10, 16777216}, {11, 67108864}, {12, 268435456}, {13, 1073741824}, {14, 4294967296}, {15, infinity}]).
--define(MSG_SIZE_BUCKETS_DEFAULT, {'_', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}).
+-define(MSG_SIZE_BUCKETS_LIMITS, [{2,256}, {3,1024}, {4, 4096}, {5, 16384}, {6,65536}, {7, 262144}, {8, 1048576}, {9, 4194304}, {10, 16777216}, {11, 67108864}, {12, 134217728}, {13, 536870912}, {14, infinity}]).
+-define(MSG_SIZE_BUCKETS_DEFAULT, {'_', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}).
 

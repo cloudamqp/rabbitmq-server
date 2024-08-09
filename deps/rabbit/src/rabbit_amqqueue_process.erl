@@ -685,6 +685,7 @@ maybe_deliver_or_enqueue(Delivery = #delivery{message = Message},
                                     backing_queue_state = BQS,
                                     dlx                 = DLX,
                                     dlx_routing_key     = RK}) ->
+    rabbit_log:info("### maybe message ~p", [mc:size(Message)]),
     case {will_overflow(Delivery, State), Overflow} of
         {true, 'reject-publish'} ->
             %% Drop publish and nack to publisher
@@ -723,6 +724,7 @@ deliver_or_enqueue(Delivery = #delivery{message = Message,
                                         sender  = SenderPid},
                    Delivered,
                    State = #q{q = Q, backing_queue = BQ}) ->
+    rabbit_log:info("### got message ~p", [mc:size(Message)]),
     {Confirm, State1} = send_or_record_confirm(Delivery, State),
     Props = message_properties(Message, Confirm, State1),
     case attempt_delivery(Delivery, Props, Delivered, State1) of
@@ -737,8 +739,10 @@ deliver_or_enqueue(Delivery = #delivery{message = Message,
             {BQS1, MTC1} = discard(Delivery, BQ, BQS, MTC, amqqueue:get_name(Q)),
             State2#q{backing_queue_state = BQS1, msg_id_to_channel = MTC1};
         {undelivered, State2 = #q{backing_queue_state = BQS}} ->
+            rabbit_log:info("### Size: ~p bytes", [mc:size(Message)]),
             ok = rabbit_core_metrics:messages_stats(amqqueue:get_name(Q), Props#message_properties.size),
             BQS1 = BQ:publish(Message, Props, Delivered, SenderPid, BQS),
+            rabbit_log:info("### got here ~p", [mc:size(Message)]),
             {Dropped, State3 = #q{backing_queue_state = BQS2}} =
                 maybe_drop_head(State2#q{backing_queue_state = BQS1}),
             QLen = BQ:len(BQS2),
