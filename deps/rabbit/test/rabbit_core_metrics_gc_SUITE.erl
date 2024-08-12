@@ -27,7 +27,7 @@ groups() ->
         node_metrics,
         gen_server2_metrics,
         consumer_metrics,
-        historic_message_size_metrics
+        historic_message_metrics
       ]
      }
     ].
@@ -309,20 +309,25 @@ consumer_metrics(Config) ->
 dead_pid() ->
     spawn(fun() -> ok end).
 
-historic_message_size_metrics(Config) ->
+historic_message_metrics(Config) ->
     A = rabbit_ct_broker_helpers:get_node_config(Config, 0, nodename),
     Ch = rabbit_ct_client_helpers:open_channel(Config, A),
-   
+
+    % Need to delete the tested table since node does not restart between tests
+    true = rabbit_ct_broker_helpers:rpc(Config, A, ets, delete_all_objects, [historic_message_sizes_metrics]),
+    true = rabbit_ct_broker_helpers:rpc(Config, A, ets, delete_all_objects, [historic_message_metrics]),
+
     CQName = <<"classic_queue">>,
     QQName = <<"quorum_queue">>,
     SName = <<"stream_queue">>,
-    
+
     CQResource = q(CQName),
     QQResource = q(QQName),
     SQResource = q(SName),
 
     [] = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
-    
+    [] = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_metrics]),
+
     amqp_channel:call(Ch, #'queue.declare'{
         queue = CQName
     }),
@@ -336,14 +341,14 @@ historic_message_size_metrics(Config) ->
         durable = true,
         arguments = [{<<"x-queue-type">>, longstr, <<"stream">>}]
     }),
-    
+
     [] = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
 
 
     InsertFun = fun(QueueNames, PayloadSize) ->
         Payload = crypto:strong_rand_bytes(PayloadSize),
         AmqpMsg = #amqp_msg{payload = Payload},
-        
+
         lists:foreach(
             fun(QName) ->
                 ok = amqp_channel:call(
@@ -355,47 +360,83 @@ historic_message_size_metrics(Config) ->
                     AmqpMsg)
             end,
             QueueNames),
-        timer:sleep(500)
+        timer:sleep(150)
     end,
-    
+
     % First insert
     InsertFun([CQName, QQName, SName], 1024),
-    
-    Res0 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    Metrics0 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_metrics]),
+    {CQResource, 1024} = lists:keyfind(CQResource, 1, Metrics0),
+    {QQResource, 1024} = lists:keyfind(QQResource, 1, Metrics0),
+    {SQResource, 1024} = lists:keyfind(SQResource, 1, Metrics0),
+    {amqp091, 1024} = lists:keyfind(amqp091, 1, Metrics0),
+    Sizes0 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
     {CQResource, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
-        lists:keyfind(CQResource, 1, Res0),
+        lists:keyfind(CQResource, 1, Sizes0),
     {QQResource, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
-        lists:keyfind(QQResource, 1, Res0),
+        lists:keyfind(QQResource, 1, Sizes0),
     {SQResource, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
-        lists:keyfind(SQResource, 1, Res0),
+        lists:keyfind(SQResource, 1, Sizes0),
     {amqp091, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0} =
-        lists:keyfind(amqp091, 1, Res0),
+        lists:keyfind(amqp091, 1, Sizes0),
 
-    InsertFun([CQName, QQName, SName], 8 * 1024 * 1024),
-    Res1 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
-    {CQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0} =
-        lists:keyfind(CQResource, 1, Res1),
-    {QQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0} =
-        lists:keyfind(QQResource, 1, Res1),
-    {SQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0} =
-        lists:keyfind(SQResource, 1, Res1),
-    {amqp091, 0, 3, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0} =
-        lists:keyfind(amqp091, 1, Res1),
-    
-    InsertFun([CQName, QQName, SName], 16 * 1024 * 1024),
+    % Second insert
+    InsertFun([CQName, QQName, SName], 1 * 1024 * 1024),
+    Metrics1 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_metrics]),
+    {CQResource, 1 * 1024 * 1024} = lists:keyfind(CQResource, 1, Metrics1),
+    {QQResource, 1 * 1024 * 1024} = lists:keyfind(QQResource, 1, Metrics1),
+    {SQResource, 1 * 1024 * 1024} = lists:keyfind(SQResource, 1, Metrics1),
+    {amqp091, 1 * 1024 * 1024} = lists:keyfind(amqp091, 1, Metrics1),
+    Sizes1 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    {CQResource, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(CQResource, 1, Sizes1),
+    {QQResource, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(QQResource, 1, Sizes1),
+    {SQResource, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(SQResource, 1, Sizes1),
+    {amqp091, 0, 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0} =
+        lists:keyfind(amqp091, 1, Sizes1),
+
+    % Third insert, queue delete and gc
+    InsertFun([CQName, QQName, SName], 4 * 1024 * 1024),
     amqp_channel:call(Ch, #'queue.delete'{queue = CQName}),
-    timer:sleep(500),
+    rabbit_ct_broker_helpers:rpc(Config, A, erlang, send, [rabbit_core_metrics_gc, start_gc]),
+    timer:sleep(150),
+
+    Metrics2 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_metrics]),
+    false = lists:keyfind(CQResource, 1, Metrics2),
+    {QQResource, 4 * 1024 * 1024} = lists:keyfind(QQResource, 1, Metrics2),
+    {SQResource, 4 * 1024 * 1024} = lists:keyfind(SQResource, 1, Metrics2),
+    {amqp091, 4 * 1024 * 1024} = lists:keyfind(amqp091, 1, Metrics2),
+    Sizes2 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    false =
+        lists:keyfind(CQResource, 1, Sizes2),
+    {QQResource, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0} =
+        lists:keyfind(QQResource, 1, Sizes2),
+    {SQResource, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0} =
+        lists:keyfind(SQResource, 1, Sizes2),
+    {amqp091, 0, 3, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0} =
+        lists:keyfind(amqp091, 1, Sizes2),
+
+    % Fourth insert. Just on one queue.
+    InsertFun([QQName], 16 * 1024 * 1024),
+    timer:sleep(150),
     rabbit_ct_broker_helpers:rpc(Config, A, erlang, send, [rabbit_core_metrics_gc, start_gc]),
 
-    Res2 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
+    Metrics3 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_metrics]),
+    false = lists:keyfind(CQResource, 1, Metrics2),
+    {QQResource, 16 * 1024 * 1024} = lists:keyfind(QQResource, 1, Metrics3),
+    {SQResource, 4 * 1024 * 1024} = lists:keyfind(SQResource, 1, Metrics3),
+    {amqp091, 16 * 1024 * 1024} = lists:keyfind(amqp091, 1, Metrics3),
+    Sizes3 = rabbit_ct_broker_helpers:rpc(Config, A, ets, tab2list, [historic_message_sizes_metrics]),
     false =
-        lists:keyfind(CQResource, 1, Res2),
-    {QQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0} =
-        lists:keyfind(QQResource, 1, Res2),
-    {SQResource, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0} =
-        lists:keyfind(SQResource, 1, Res2),
-    {amqp091, 0, 3, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0} =
-        lists:keyfind(amqp091, 1, Res2),
+        lists:keyfind(CQResource, 1, Sizes3),
+    {QQResource, 0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0} =
+        lists:keyfind(QQResource, 1, Sizes3),
+    {SQResource, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0} =
+        lists:keyfind(SQResource, 1, Sizes3),
+    {amqp091, 0, 3, 0, 0, 0, 0, 3, 3, 1, 0, 0, 0, 0} =
+        lists:keyfind(amqp091, 1, Sizes3),
 
     ok.
 

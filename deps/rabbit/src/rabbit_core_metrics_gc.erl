@@ -72,6 +72,7 @@ gc_local_queues() ->
     GbSetDown = gb_sets:from_list(QueuesDown),
     gc_queue_metrics(GbSet, GbSetDown),
     gc_entity(queue_coarse_metrics, GbSet),
+    gc_entity(historic_message_metrics, GbSet),
     gc_entity(historic_message_sizes_metrics, GbSet),
     Followers = gb_sets:from_list([amqqueue:get_name(Q) || Q <- rabbit_amqqueue:list_local_followers() ]),
     gc_leader_data(Followers).
@@ -150,9 +151,11 @@ gc_queue_metrics(GbSet, GbSetDown) ->
               end, none, Table).
 
 gc_entity(Table, GbSet) ->
-    rabbit_log:info("gcing entity ~p GbSet ~p", [Table, GbSet]),
     ets:foldl(fun({{_, Id} = Key, _}, none) ->
                       gc_entity(Id, Table, Key, GbSet);
+                 ({Id = _Key, _}, none)
+                    when Id == amqp091 ->
+                      none;
                  ({Id = Key, _}, none) ->
                       gc_entity(Id, Table, Key, GbSet);
                  ({Id = Key, _, _}, none) ->
@@ -165,6 +168,9 @@ gc_entity(Table, GbSet) ->
                  ({Id = Key, _, _, _, _, _, _, _, _}, none)
                     when Table == queue_delivery_metrics ->
                       gc_entity(Id, Table, Key, GbSet);
+                 ({Id = _Key, _, _, _, _, _, _, _, _, _, _, _, _, _}, none)
+                    when Id == amqp091 ->
+                      none;
                  ({Id = Key, _, _, _, _, _, _, _, _, _, _, _, _, _}, none)
                     when Table == historic_message_sizes_metrics ->
                       gc_entity(Id, Table, Key, GbSet)
