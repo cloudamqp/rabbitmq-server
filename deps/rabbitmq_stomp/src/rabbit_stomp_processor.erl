@@ -1204,7 +1204,7 @@ send_frame(Command, Headers, BodyFragments, State) ->
 send_frame(Frame, State = #proc_state{send_fun = SendFun,
                                  trailing_lf = TrailingLF}) ->
     SendFun(rabbit_stomp_frame:serialize(Frame, TrailingLF)),
-    ok = rabbit_core_metrics:messages_stats(stomp, size(Frame)),
+    ok = rabbit_core_metrics:message_sizes(stomp, size(Frame)),
     State.
 
 send_error_frame(Message, ExtraHeaders, Format, Args, State) ->

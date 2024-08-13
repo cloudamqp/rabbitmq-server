@@ -8,7 +8,7 @@
 -module(rabbit_core_metrics).
 
 -include("rabbit_core_metrics.hrl").
-
+-include_lib("stdlib/include/ms_transform.hrl").
 -export([create_table/1]).
 -export([init/0]).
 -export([terminate/0]).
@@ -38,7 +38,7 @@
          queue_deleted/1,
          queues_deleted/1]).
 
--export([messages_stats/2]).
+-export([message_sizes/2]).
 
 -export([node_stats/2]).
 
@@ -94,7 +94,7 @@
 -spec queue_stats(rabbit_types:rabbit_amqqueue_name(), rabbit_types:infos()) -> ok.
 -spec queue_stats(rabbit_types:rabbit_amqqueue_name(), integer(), integer(), integer(),
                   integer()) -> ok.
--spec messages_stats(Domain, pos_integer()) -> ok
+-spec message_sizes(Domain, pos_integer()) -> ok
     when Domain :: node | rabbit_types:rabbit_amqqueue_name().
 -spec node_stats(atom(), rabbit_types:infos()) -> ok.
 -spec node_node_stats({node(), node()}, rabbit_types:infos()) -> ok.
@@ -118,6 +118,7 @@ init() ->
     Tables = ?CORE_TABLES ++ ?CORE_EXTRA_TABLES ++ ?CORE_NON_CHANNEL_TABLES,
     _ = [create_table({Table, Type})
         || {Table, Type} <- Tables],
+    true = ets:insert(message_sizes, [{amqp091, 0}]),
     ok.
 
 terminate() ->
@@ -378,22 +379,50 @@ build_match_spec_conditions_to_delete_all_queues([Queue|Queues]) ->
 build_match_spec_conditions_to_delete_all_queues([]) ->
     true.
 
-messages_stats(_Domain, []) ->
+message_sizes(_Domain, []) ->
     ok;
-messages_stats(Domain, MessagesSizes) when is_list(MessagesSizes) ->
+% For protocol `Domain` in-ets entries always exists (generated on ets metrics
+% initialization), therefore we can use `ets:select_replace`, which is needed
+% for conditional atomic update of max message size metrics but does not allow
+% for default value.
+message_sizes(Domain, MessagesSizes) when
+    Domain =:= amqp091,
+    is_list(MessagesSizes)
+->
     [LargerMessageSize | _] = lists:sort(
         fun(A, B) -> A > B end,
         MessagesSizes),
 
-    CurrentMaxMsgSize = ets:lookup_element(historic_message_metrics, Domain, 2, 0),
+    MS = ets:fun2ms(
+        fun({D, CurrentMaxSize}) when
+            CurrentMaxSize < LargerMessageSize,
+            D == Domain
+        ->
+            {D, LargerMessageSize}
+        end),
+    ets:select_replace(message_sizes, MS),
+    messages_sizes_histogram(Domain, MessagesSizes);
+% For queue/exchange `Domain` we can use non-atomic conditional update since we
+% call metric generation from the queue/exchange process, so no risk of race
+% condition between 2 metric updates.
+message_sizes(Domain, MessagesSizes) when is_list(MessagesSizes) ->
+    [LargerMessageSize | _] = lists:sort(
+        fun(A, B) -> A > B end,
+        MessagesSizes),
+
+    CurrentMaxMsgSize = ets:lookup_element(message_sizes, Domain, 2, 0),
     case LargerMessageSize > CurrentMaxMsgSize of
         true ->
-            ets:insert(historic_message_metrics, {Domain, LargerMessageSize}),
+            ets:insert(message_sizes, {Domain, LargerMessageSize}),
             ok;
         false ->
             ok
     end,
+    messages_sizes_histogram(Domain, MessagesSizes);
+message_sizes(Domain, MessageSize) ->
+    message_sizes(Domain, [MessageSize]).
 
+messages_sizes_histogram(Domain, MessagesSizes) ->
     BucketIncrsAsMap = lists:foldl(
       fun(MessageSize, Acc) -> 
         {value, {Bucket, _MaxSize}} = lists:search(
@@ -406,10 +435,8 @@ messages_stats(Domain, MessagesSizes) when is_list(MessagesSizes) ->
       #{},
       MessagesSizes),
     BucketIncrs = maps:to_list(BucketIncrsAsMap),
-    ets:update_counter(historic_message_sizes_metrics, Domain, BucketIncrs, ?MSG_SIZE_BUCKETS_DEFAULT),
-    ok;
-messages_stats(Domain, MessageSize) ->
-    messages_stats(Domain, [MessageSize]).
+    ets:update_counter(message_sizes_histogram, Domain, BucketIncrs, ?MSG_SIZE_BUCKETS_DEFAULT),
+    ok.
 
 node_stats(persister_metrics, Infos) ->
     ets:insert(node_persister_metrics, {node(), Infos}),

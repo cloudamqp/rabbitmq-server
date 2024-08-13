@@ -1558,7 +1558,7 @@ deliver_to_queues(Message,
     Qs = rabbit_amqqueue:prepend_extra_bcc(Qs0),
     case rabbit_queue_type:deliver(Qs, Message, Options, QStates0) of
         {ok, QStates, Actions} ->
-            rabbit_core_metrics:messages_stats(ProtoVer, element(2,mc:size(Message))),
+            rabbit_core_metrics:message_sizes(ProtoVer, element(2,mc:size(Message))),
             rabbit_global_counters:messages_routed(ProtoVer, length(Qs)),
             State = process_routing_confirm(Options, Qs,
                                             State0#state{queue_states = QStates}),

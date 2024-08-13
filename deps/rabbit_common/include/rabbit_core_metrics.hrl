@@ -32,8 +32,8 @@
 % same info as some of the channel_queue_metrics, channel_exchange_metrics and
 % channel_queue_exchange_metrics but without including the channel ID in the
 % key.
--define(CORE_NON_CHANNEL_TABLES, [{historic_message_metrics, set},
-                                  {historic_message_sizes_metrics, set}, 
+-define(CORE_NON_CHANNEL_TABLES, [{message_sizes, set},
+                                  {message_sizes_histogram, set},
                                   {queue_delivery_metrics, set},
                                   {exchange_metrics, set},
                                   {queue_exchange_metrics, set}]).

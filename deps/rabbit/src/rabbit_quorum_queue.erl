@@ -981,7 +981,7 @@ deliver(QSs, Msg0, Options) ->
               QRef = amqqueue:get_pid(Q),
               ok = rabbit_fifo_client:untracked_enqueue([QRef], Msg),
               {_, MsgSize} = mc:size(Msg),
-              rabbit_core_metrics:messages_stats(QName, MsgSize),
+              rabbit_core_metrics:message_sizes(QName, MsgSize),
               {Qs, Actions};
          ({Q, S0}, {Qs, Actions}) ->
               QName = amqqueue:get_name(Q),
@@ -991,7 +991,7 @@ deliver(QSs, Msg0, Options) ->
                        [{rejected, QName, [Correlation]} | Actions]};
                   {ok, S, As} ->
                       {_, MsgSize} = mc:size(Msg),
-                      rabbit_core_metrics:messages_stats(QName, MsgSize),
+                      rabbit_core_metrics:message_sizes(QName, MsgSize),
                       {[{Q, S} | Qs], As ++ Actions}
               end
       end, {[], []}, QSs).

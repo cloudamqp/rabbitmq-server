@@ -499,7 +499,7 @@ available_messages(#stream{log = Log,
 
 deliver(QSs, Msg, Options) ->
     lists:foreach(
-      fun({Q, _S}) -> rabbit_core_metrics:messages_stats(amqqueue:get_name(Q), element(2,mc:size(Msg))) end,
+      fun({Q, _S}) -> rabbit_core_metrics:message_sizes(amqqueue:get_name(Q), element(2,mc:size(Msg))) end,
       QSs), 
     lists:foldl(
       fun({Q, stateless}, {Qs, Actions}) ->

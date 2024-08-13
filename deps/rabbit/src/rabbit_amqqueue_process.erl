@@ -737,7 +737,7 @@ deliver_or_enqueue(Delivery = #delivery{message = Message,
             {BQS1, MTC1} = discard(Delivery, BQ, BQS, MTC, amqqueue:get_name(Q)),
             State2#q{backing_queue_state = BQS1, msg_id_to_channel = MTC1};
         {undelivered, State2 = #q{backing_queue_state = BQS}} ->
-            ok = rabbit_core_metrics:messages_stats(amqqueue:get_name(Q), Props#message_properties.size),
+            ok = rabbit_core_metrics:message_sizes(amqqueue:get_name(Q), Props#message_properties.size),
             BQS1 = BQ:publish(Message, Props, Delivered, SenderPid, BQS),
             {Dropped, State3 = #q{backing_queue_state = BQS2}} =
                 maybe_drop_head(State2#q{backing_queue_state = BQS1}),
