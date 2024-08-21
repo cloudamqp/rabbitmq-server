@@ -194,6 +194,10 @@
         {8, undefined, channel_get_empty_total, counter, "Total number of times basic.get operations fetched no message"}
     ]},
 
+    {connection_created, [
+        {2, undefined, connection_created, gauge, "Connections currently open"}
+    ]},
+
     {connection_coarse_metrics, [
         {2, undefined, connection_incoming_bytes_total, counter, "Total number of bytes received on a connection"},
         {3, undefined, connection_outgoing_bytes_total, counter, "Total number of bytes sent on a connection"},
@@ -596,6 +600,23 @@ get_data(queue_metrics = Table, false, VHostsFilter) ->
                {message_bytes_ready, A11}, {message_bytes_unacknowledged, A12},
                {messages_paged_out, A13}, {message_bytes_paged_out, A14},
                {disk_reads, A15}, {disk_writes, A16}, {segments, A17}]}];
+get_data(connection_created = Table, true, VHostsFilter) ->
+    Result = ets:foldl(
+        fun({_Pid, Infos}, Acc) ->
+            case proplists:get_value(vhost, Infos, undefined) of
+                undefined -> 
+                    Acc;
+                VHost ->
+                    case map_get(VHost, VHostsFilter) of
+                        false -> Acc;
+                        true -> maps:update_with(VHost, fun(Old) -> Old + 1 end, 1, Acc) 
+                    end
+            end
+        end,
+        #{},
+        Table),
+    maps:to_list(Result);
+    
 get_data(Table, false, VHostsFilter) when Table == channel_exchange_metrics;
                            Table == queue_coarse_metrics;
                            Table == queue_delivery_metrics;
@@ -794,7 +815,7 @@ division(A, B) ->
 accumulate_count_and_sum(Value, {Count, Sum}) ->
     {Count + 1, Sum + Value}.
 
-empty(T) when T == channel_queue_exchange_metrics; T == queue_exchange_metrics; T == channel_process_metrics; T == queue_consumer_count ->
+empty(T) when T == channel_queue_exchange_metrics; T == queue_exchange_metrics; T == channel_process_metrics; T == queue_consumer_count; T == connection_created ->
     {T, 0};
 empty(T) when T == connection_coarse_metrics; T == auth_attempt_metrics; T == auth_attempt_detailed_metrics ->
     {T, 0, 0, 0};
