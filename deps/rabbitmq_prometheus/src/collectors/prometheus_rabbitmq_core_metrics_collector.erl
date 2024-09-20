@@ -204,7 +204,8 @@
         {2, undefined, connection_incoming_packets_total, counter, "Total number of packets received on a connection", recv_cnt},
         {2, undefined, connection_outgoing_packets_total, counter, "Total number of packets sent on a connection", send_cnt},
         {2, undefined, connection_pending_packets, gauge, "Number of packets waiting to be sent on a connection", send_pend},
-        {2, undefined, connection_channels, gauge, "Channels on a connection", channels}
+        {2, undefined, connection_channels, gauge, "Channels on a connection", channels},
+        {2, undefined, state, gauge, "connection state", state}
     ]},
 
     {channel_queue_exchange_metrics, [
@@ -547,14 +548,15 @@ emit_gauge_metric_if_defined(Labels, Value) ->
   end.
 
 get_data(connection_metrics = Table, false, _) ->
-    {Table, A1, A2, A3, A4} = ets:foldl(fun({_, Props}, {T, A1, A2, A3, A4}) ->
+    {Table, A1, A2, A3, A4, A5} = ets:foldl(fun({_, Props}, {T, A1, A2, A3, A4, A5}) ->
                                             {T,
                                              sum(proplists:get_value(recv_cnt, Props), A1),
                                              sum(proplists:get_value(send_cnt, Props), A2),
                                              sum(proplists:get_value(send_pend, Props), A3),
-                                             sum(proplists:get_value(channels, Props), A4)}
+                                             sum(proplists:get_value(channels, Props), A4),
+                                             sum(proplists:get_value(state, Props), A5)}
                                     end, empty(Table), Table),
-    [{Table, [{recv_cnt, A1}, {send_cnt, A2}, {send_pend, A3}, {channels, A4}]}];
+    [{Table, [{recv_cnt, A1}, {send_cnt, A2}, {send_pend, A3}, {channels, A4}, {state, A5}]}];
 get_data(channel_metrics = Table, false, _) ->
     {Table, A1, A2, A3, A4, A5, A6, A7} =
         ets:foldl(fun({_, Props}, {T, A1, A2, A3, A4, A5, A6, A7}) ->
@@ -811,8 +813,10 @@ empty(T) when T == channel_queue_exchange_metrics; T == queue_exchange_metrics; 
     {T, 0};
 empty(T) when T == connection_coarse_metrics; T == auth_attempt_metrics; T == auth_attempt_detailed_metrics ->
     {T, 0, 0, 0};
-empty(T) when T == channel_exchange_metrics; T == exchange_metrics; T == queue_coarse_metrics; T == connection_metrics ->
+empty(T) when T == channel_exchange_metrics; T == exchange_metrics; T == queue_coarse_metrics ->
     {T, 0, 0, 0, 0};
+empty(T) when T == connection_metrics ->
+    {T, 0, 0, 0, 0, 0};
 empty(T) when T == ra_metrics ->
     {T, 0, 0, 0, 0, 0, {0, 0}};
 empty(T) when T == channel_queue_metrics; T == queue_delivery_metrics; T == channel_metrics ->
