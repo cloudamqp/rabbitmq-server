@@ -195,7 +195,8 @@ process_connect(
         {ok, ClientId1} ?= extract_client_id_from_certificate(ClientId0, Socket),
         {ok, ClientId} ?= ensure_client_id(ClientId1, CleanStart, ProtoVer),
         {ok, Username1, Password} ?= check_credentials(Username0, Password0, SslLoginName, PeerIp),
-        {VHostPickedUsing, {VHost, Username2}} = get_vhost(Username1, SslLoginName, Port),
+        %% Username1 = SslLoginName IFF Username0 = Password0 = undefined
+        {VHostPickedUsing, {VHost, Username2}} = get_vhost(Username1, Port),
         ?LOG_DEBUG("MQTT connection ~s picked vhost using ~s", [ConnName0, VHostPickedUsing]),
         ok ?= check_vhost_exists(VHost, Username2, PeerIp),
         ok ?= check_vhost_alive(VHost),
@@ -1179,27 +1180,8 @@ ensure_credential_expiry_timer(User = #user{username = Username}, PeerIp) ->
             end
     end.
 
-get_vhost(UserBin, none, Port) ->
-    get_vhost_no_ssl(UserBin, Port);
-get_vhost(UserBin, SslLogin, Port) ->
-    get_vhost_ssl(UserBin, SslLogin, Port).
-
-get_vhost_no_ssl(UserBin, Port) ->
-    case get_vhost_username(UserBin) of
-        undefined ->
-            case get_vhost_from_port_mapping(Port) of
-                undefined ->
-                    VhostFromConfig = rabbit_mqtt_util:env(vhost),
-                    {plugin_configuration_or_default_vhost, {VhostFromConfig, UserBin}};
-                VHostFromPortMapping ->
-                    {port_to_vhost_mapping, {VHostFromPortMapping, UserBin}}
-            end;
-        VHostUser ->
-            {vhost_in_username, VHostUser}
-    end.
-
-get_vhost_ssl(UserBin, SslLoginName, Port) ->
-    case get_vhost_from_user_mapping(SslLoginName) of
+get_vhost(UserBin, Port) ->
+    case get_vhost_from_user_mapping(UserBin) of
         undefined ->
             case get_vhost_from_port_mapping(Port) of
                 undefined ->
@@ -1213,8 +1195,8 @@ get_vhost_ssl(UserBin, SslLoginName, Port) ->
                 VHostFromPortMapping ->
                     {port_to_vhost_mapping, {VHostFromPortMapping, UserBin}}
             end;
-        VHostFromCertMapping ->
-            {client_cert_to_vhost_mapping, {VHostFromCertMapping, UserBin}}
+        VHostFromUserMapping ->
+            {user_to_vhost_mapping, {VHostFromUserMapping, UserBin}}
     end.
 
 get_vhost_username(UserBin) ->
