@@ -297,7 +297,7 @@ end}.
     {validators, ["non_zero_positive_integer"]}
 ]}.
 
-%% Topic Aliax Maximum
+%% Topic Alias Maximum
 
 {mapping, "mqtt.topic_alias_maximum", "rabbitmq_mqtt.topic_alias_maximum", [
     {datatype, integer},
