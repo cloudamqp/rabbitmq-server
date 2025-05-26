@@ -275,9 +275,12 @@ start_cluster(Q) ->
     {LeaderNode, FollowerNodes} =
         rabbit_queue_location:select_leader_and_followers(Q, QuorumSize),
     LeaderId = {RaName, LeaderNode},
+    UIDs = maps:from_list([{Node, ra:new_uid(ra_lib:to_binary(RaName))}
+                           || Node <- [LeaderNode | FollowerNodes]]),
     NewQ0 = amqqueue:set_pid(Q, LeaderId),
     NewQ1 = amqqueue:set_type_state(NewQ0,
-                                    #{nodes => [LeaderNode | FollowerNodes]}),
+                                    #{nodes => [LeaderNode | FollowerNodes],
+                                      uids => UIDs}),
 
     Versions = [V || {ok, V} <- erpc:multicall(FollowerNodes,
                                                rabbit_fifo, version, [],
@@ -1986,6 +1989,8 @@ make_ra_conf(Q, ServerId, TickTimeout,
     QName = amqqueue:get_name(Q),
     RaMachine = ra_machine(Q),
     [{ClusterName, _} | _] = Members = members(Q),
+    {_, Node} = ServerId,
+    #{uids := #{Node := UId}} = amqqueue:get_type_state(Q),
     UId = ra:new_uid(ra_lib:to_binary(ClusterName)),
     FName = rabbit_misc:rs(QName),
     Formatter = {?MODULE, format_ra_event, [QName]},
