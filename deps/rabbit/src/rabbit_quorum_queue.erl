@@ -794,6 +794,16 @@ recover(_Vhost, Queues) ->
          ServerId = {Name, node()},
          QName = amqqueue:get_name(Q0),
          MutConf = make_mutable_config(Q0),
+         RaUId = ra_directory:uid_of(?RA_SYSTEM, Name),
+         QTypeState = amqqueue:get_type_state(Q0),
+         case QTypeState of
+             #{uids := #{node() := RaUId}} ->
+                 ok;
+             _ ->
+                 % delete and recreate queue
+                 delete_member(Q0, node()),
+                 add_member(Q0, node())
+         end,
          Res = case ra:restart_server(?RA_SYSTEM, ServerId, MutConf) of
                    ok ->
                        % queue was restarted, good
@@ -1991,7 +2001,6 @@ make_ra_conf(Q, ServerId, TickTimeout,
     [{ClusterName, _} | _] = Members = members(Q),
     {_, Node} = ServerId,
     #{uids := #{Node := UId}} = amqqueue:get_type_state(Q),
-    UId = ra:new_uid(ra_lib:to_binary(ClusterName)),
     FName = rabbit_misc:rs(QName),
     Formatter = {?MODULE, format_ra_event, [QName]},
     LogCfg = #{uid => UId,
