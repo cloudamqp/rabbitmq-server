@@ -105,7 +105,8 @@ groups() ->
                                             force_checkpoint,
                                             policy_repair,
                                             gh_12635,
-                                            replica_states
+                                            replica_states,
+                                            restart_after_queue_reincarnation
                                            ]
                        ++ all_tests()},
                       {cluster_size_5, [], [start_queue,
@@ -4879,6 +4880,70 @@ replica_states(Config) ->
                     ?assert(maps:is_key(Q3_ClusterName, ReplicaStates))
                 end
              end, Result2).
+
+restart_after_queue_reincarnation(Config) ->
+    [S1, S2, S3] = Servers = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
+    Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
+    QName = <<"QQ">>,
+
+    ?assertEqual({'queue.declare_ok', QName, 0, 0},
+                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+
+    [Q] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, list, []),
+    VHost = amqqueue:get_vhost(Q),
+
+    MessagesPublished = 10_000,
+    publish_many(Ch, QName, MessagesPublished),
+
+    %% Trigger a snapshot by purging the queue.
+    rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_queue_type, purge, [Q]),
+
+    %% Stop S3
+    rabbit_ct_broker_helpers:mark_as_being_drained(Config, S3),
+    ?assertEqual(ok, rabbit_control_helper:command(stop_app, S3)),
+
+    %% Delete and re-declare queue with the same name.
+    rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, delete, [Q,false,false,<<"dummy_user">>]),
+    ?assertEqual({'queue.declare_ok', QName, 0, 0},
+                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+
+    % Now S3 should have the old queue state, and S1 and S2 a new one.
+    St1 = rabbit_misc:append_rpc_all_nodes(Servers, rabbit_quorum_queue, status, [VHost, QName]),
+    Status1 = [{proplists:get_value(<<"Node Name">>, S), S} || S <- St1],
+    ct:pal("Status1: ~tp", [Status1]),
+    lists:foreach(fun({Node, Status}) ->
+        case Node of
+            S3 ->
+                ?assertEqual(noproc, proplists:get_value(<<"Raft State">>, Status)),
+                ?assert(proplists:get_value(<<"Last Log Index">>, Status) > MessagesPublished),
+                ?assert(proplists:get_value(<<"Last Written">>, Status) > MessagesPublished),
+                ?assert(proplists:get_value(<<"Last Applied">>, Status) > MessagesPublished),
+                ?assert(proplists:get_value(<<"Commit Index">>, Status) > MessagesPublished);
+            _S ->
+                ?assert(lists:member(proplists:get_value(<<"Raft State">>, Status), [leader, follower])),
+                ?assert(proplists:get_value(<<"Last Log Index">>, Status) < MessagesPublished),
+                ?assert(proplists:get_value(<<"Last Written">>, Status) < MessagesPublished),
+                ?assert(proplists:get_value(<<"Last Applied">>, Status) < MessagesPublished),
+                ?assert(proplists:get_value(<<"Commit Index">>, Status) < MessagesPublished)
+        end
+    end, Status1),
+
+    %% Bumping term in online nodes
+    rabbit_ct_broker_helpers:rpc(Config, 1, rabbit_quorum_queue, transfer_leadership, [Q, S2]),
+
+    %% Restart S3
+    ?assertEqual(ok, rabbit_control_helper:command(start_app, S3)),
+
+    %% Now all three nodes should have the new state.
+    Status2 = rabbit_misc:append_rpc_all_nodes(Servers, rabbit_quorum_queue, status, [VHost, QName]),
+    ct:pal("Status2: ~tp", [Status2]),
+    lists:foreach(fun(Status) ->
+        ?assert(lists:member(proplists:get_value(<<"Raft State">>, Status), [leader, follower])),
+        ?assert(proplists:get_value(<<"Last Log Index">>, Status) < MessagesPublished),
+        ?assert(proplists:get_value(<<"Last Written">>, Status) < MessagesPublished),
+        ?assert(proplists:get_value(<<"Last Applied">>, Status) < MessagesPublished),
+        ?assert(proplists:get_value(<<"Commit Index">>, Status) < MessagesPublished)
+    end, Status2).
 
 %%----------------------------------------------------------------------------
 
