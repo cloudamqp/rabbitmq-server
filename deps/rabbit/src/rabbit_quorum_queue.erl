@@ -800,9 +800,7 @@ recover(_Vhost, Queues) ->
              #{uids := #{node() := RaUId}} ->
                  ok;
              _ ->
-                 % delete and recreate queue
-                 delete_member(Q0, node()),
-                 add_member(Q0, node())
+                 maybe_delete_data_dir(RaUId)
          end,
          Res = case ra:restart_server(?RA_SYSTEM, ServerId, MutConf) of
                    ok ->
