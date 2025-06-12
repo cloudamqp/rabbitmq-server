@@ -106,7 +106,8 @@ groups() ->
                                             policy_repair,
                                             gh_12635,
                                             replica_states,
-                                            restart_after_queue_reincarnation
+                                            restart_after_queue_reincarnation,
+                                            no_messages_after_queue_reincarnation
                                            ]
                        ++ all_tests()},
                       {cluster_size_5, [], [start_queue,
@@ -4881,6 +4882,7 @@ replica_states(Config) ->
                 end
              end, Result2).
 
+% Testcase motivated by : https://github.com/rabbitmq/rabbitmq-server/discussions/13131
 restart_after_queue_reincarnation(Config) ->
     [S1, S2, S3] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
     Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
@@ -4960,6 +4962,62 @@ restart_after_queue_reincarnation(Config) ->
      end || {K, V} <- NE1
     ].
 
+% Testcase motivated by : https://github.com/rabbitmq/rabbitmq-server/issues/12366
+no_messages_after_queue_reincarnation(Config) ->
+    [S1, S2, S3] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
+    Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
+    QName = <<"QQ">>,
+
+    ?assertEqual({'queue.declare_ok', QName, 0, 0},
+                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+
+    [Q] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, list, []),
+
+    publish(Ch, QName, <<"msg1">>),
+    publish(Ch, QName, <<"msg2">>),
+
+    %% Trigger a snapshot by purging the queue.
+    rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_queue_type, purge, [Q]),
+
+    %% Stop S3
+    rabbit_ct_broker_helpers:mark_as_being_drained(Config, S3),
+    ?assertEqual(ok, rabbit_control_helper:command(stop_app, S3)),
+
+    qos(Ch, 1, false),
+    subscribe(Ch, QName, false, <<"tag0">>, [], 500),
+    DeliveryTag = receive
+        {#'basic.deliver'{delivery_tag = DT}, #amqp_msg{}} ->
+            receive
+                {#'basic.deliver'{consumer_tag = <<"tag0">>}, #amqp_msg{}} ->
+                    ct:fail("did not expect the second one")
+            after 500 ->
+                DT
+            end
+    after 500 ->
+            ct:fail("Expected some delivery, but got none")
+    end,
+
+    %% Delete and re-declare queue with the same name.
+    rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, delete, [Q,false,false,<<"dummy_user">>]),
+    ?assertEqual({'queue.declare_ok', QName, 0, 0},
+                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+
+    %% Bumping term in online nodes
+    rabbit_ct_broker_helpers:rpc(Config, 1, rabbit_quorum_queue, transfer_leadership, [Q, S2]),
+
+    %% Restart S3
+    ?assertEqual(ok, rabbit_control_helper:command(start_app, S3)),
+
+    ok = amqp_channel:cast(Ch, #'basic.ack'{delivery_tag = DeliveryTag,
+                                       multiple     = false}),
+    %% No message should be delivered after reincarnation
+    receive
+        {#'basic.deliver'{consumer_tag = <<"tag0">>}, #amqp_msg{}} ->
+            ct:fail("Expected no deliveries, but got one")
+    after 500 ->
+            ok
+    end.
+
 %%----------------------------------------------------------------------------
 
 same_elements(L1, L2)
@@ -5029,7 +5087,10 @@ consume_empty(Ch, Queue, NoAck) ->
 subscribe(Ch, Queue, NoAck) ->
     subscribe(Ch, Queue, NoAck, <<"ctag">>, []).
 
+
 subscribe(Ch, Queue, NoAck, Tag, Args) ->
+    subscribe(Ch, Queue, NoAck, Tag, Args, ?TIMEOUT).
+subscribe(Ch, Queue, NoAck, Tag, Args, Timeout) ->
     amqp_channel:subscribe(Ch, #'basic.consume'{queue = Queue,
                                                 no_ack = NoAck,
                                                 arguments = Args,
@@ -5038,7 +5099,7 @@ subscribe(Ch, Queue, NoAck, Tag, Args) ->
     receive
         #'basic.consume_ok'{consumer_tag = Tag} ->
              ok
-    after ?TIMEOUT ->
+    after Timeout ->
               flush(100),
               exit(subscribe_timeout)
     end.
