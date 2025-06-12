@@ -4882,7 +4882,7 @@ replica_states(Config) ->
              end, Result2).
 
 restart_after_queue_reincarnation(Config) ->
-    [S1, S2, S3] = Servers = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
+    [S1, S2, S3] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
     Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
     QName = <<"QQ">>,
 
@@ -4908,25 +4908,27 @@ restart_after_queue_reincarnation(Config) ->
                  declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
 
     % Now S3 should have the old queue state, and S1 and S2 a new one.
-    St1 = rabbit_misc:append_rpc_all_nodes(Servers, rabbit_quorum_queue, status, [VHost, QName]),
-    Status1 = [{proplists:get_value(<<"Node Name">>, S), S} || S <- St1],
-    ct:pal("Status1: ~tp", [Status1]),
-    lists:foreach(fun({Node, Status}) ->
-        case Node of
-            S3 ->
-                ?assertEqual(noproc, proplists:get_value(<<"Raft State">>, Status)),
-                ?assert(proplists:get_value(<<"Last Log Index">>, Status) > MessagesPublished),
-                ?assert(proplists:get_value(<<"Last Written">>, Status) > MessagesPublished),
-                ?assert(proplists:get_value(<<"Last Applied">>, Status) > MessagesPublished),
-                ?assert(proplists:get_value(<<"Commit Index">>, Status) > MessagesPublished);
-            _S ->
-                ?assert(lists:member(proplists:get_value(<<"Raft State">>, Status), [leader, follower])),
-                ?assert(proplists:get_value(<<"Last Log Index">>, Status) < MessagesPublished),
-                ?assert(proplists:get_value(<<"Last Written">>, Status) < MessagesPublished),
-                ?assert(proplists:get_value(<<"Last Applied">>, Status) < MessagesPublished),
-                ?assert(proplists:get_value(<<"Commit Index">>, Status) < MessagesPublished)
-        end
-    end, Status1),
+    St1 = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_quorum_queue, status, [VHost, QName]),
+    Status0 = [{proplists:get_value(<<"Node Name">>, S), S} || S <- St1],
+    S3_Status1 = proplists:get_value(S3, Status0),
+    Others_Status1 = [V || {_K, V} <- proplists:delete(S3, Status0)],
+
+    S3_LastLogIndex = proplists:get_value(<<"Last Log Index">>, S3_Status1),
+    S3_LastWritten = proplists:get_value(<<"Last Written">>, S3_Status1),
+    S3_LastApplied = proplists:get_value(<<"Last Applied">>, S3_Status1),
+    S3_CommitIndex = proplists:get_value(<<"Commit Index">>, S3_Status1),
+    S3_Term = proplists:get_value(<<"Term">>, S3_Status1),
+    ct:pal("Status0: ~tp~n", [Status0]),
+
+    ?assertEqual(noproc, proplists:get_value(<<"Raft State">>, S3_Status1)),
+    ?assertEqual(unknown, proplists:get_value(<<"Membership">>, S3_Status1)),
+    [begin
+        ?assert(S3_LastLogIndex > proplists:get_value(<<"Last Log Index">>, O)),
+        ?assert(S3_LastWritten > proplists:get_value(<<"Last Written">>, O)),
+        ?assert(S3_LastApplied > proplists:get_value(<<"Last Applied">>, O)),
+        ?assert(S3_CommitIndex > proplists:get_value(<<"Commit Index">>, O)),
+        ?assertEqual(S3_Term, proplists:get_value(<<"Term">>, O))
+     end || O <- Others_Status1],
 
     %% Bumping term in online nodes
     rabbit_ct_broker_helpers:rpc(Config, 1, rabbit_quorum_queue, transfer_leadership, [Q, S2]),
@@ -4935,15 +4937,28 @@ restart_after_queue_reincarnation(Config) ->
     ?assertEqual(ok, rabbit_control_helper:command(start_app, S3)),
 
     %% Now all three nodes should have the new state.
-    Status2 = rabbit_misc:append_rpc_all_nodes(Servers, rabbit_quorum_queue, status, [VHost, QName]),
-    ct:pal("Status2: ~tp", [Status2]),
-    lists:foreach(fun(Status) ->
-        ?assert(lists:member(proplists:get_value(<<"Raft State">>, Status), [leader, follower])),
-        ?assert(proplists:get_value(<<"Last Log Index">>, Status) < MessagesPublished),
-        ?assert(proplists:get_value(<<"Last Written">>, Status) < MessagesPublished),
-        ?assert(proplists:get_value(<<"Last Applied">>, Status) < MessagesPublished),
-        ?assert(proplists:get_value(<<"Commit Index">>, Status) < MessagesPublished)
-    end, Status2).
+    Status2 = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_quorum_queue, status, [VHost, QName]),
+    % They are either leader or follower.
+    ?assert(
+       lists:all(
+         fun(NodeStatus) ->
+                 NodeRaftState = proplists:get_value(<<"Raft State">>, NodeStatus),
+                 lists:member(NodeRaftState, [leader, follower])
+         end, Status2)),
+    % Remove "Node Name" and "Raft State" from the status.
+    Status3 = [NE1, NE2, NE3]= [
+        begin
+            R = proplists:delete(<<"Node Name">>, NodeEntry),
+            proplists:delete(<<"Raft State">>, R)
+        end || NodeEntry <- Status2],
+    % Check all other properties have same value on all nodes.
+    ct:pal("Status3: ~tp", [Status3]),
+    [
+     begin
+        ?assertEqual(V, proplists:get_value(K, NE2)),
+        ?assertEqual(V, proplists:get_value(K, NE3))
+     end || {K, V} <- NE1
+    ].
 
 %%----------------------------------------------------------------------------
 
