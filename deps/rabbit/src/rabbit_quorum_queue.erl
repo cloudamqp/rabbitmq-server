@@ -794,13 +794,19 @@ recover(_Vhost, Queues) ->
          ServerId = {Name, node()},
          QName = amqqueue:get_name(Q0),
          MutConf = make_mutable_config(Q0),
+         [{ClusterName, _} | _]= members(Q0),
          RaUId = ra_directory:uid_of(?RA_SYSTEM, Name),
-         QTypeState = amqqueue:get_type_state(Q0),
-         case QTypeState of
-             #{uids := #{node() := RaUId}} ->
-                 ok;
+         QTypeState0 = amqqueue:get_type_state(Q0),
+         RaUIds = maps:get(uids, QTypeState0, undefined),
+         case RaUIds of
+             undefined ->
+                 QTypeState0;
+             #{node() := RaUId} ->
+                 QTypeState0;
              _ ->
-                 maybe_delete_data_dir(RaUId)
+                 NewRaUId = ra:new_uid(ra_lib:to_binary(ClusterName)),
+                 maybe_delete_data_dir(RaUId),
+                 QTypeState0#{uids := maps:put(node(), NewRaUId, RaUIds)}
          end,
          Res = case ra:restart_server(?RA_SYSTEM, ServerId, MutConf) of
                    ok ->
@@ -1218,12 +1224,17 @@ cleanup_data_dir() ->
 maybe_delete_data_dir(UId) ->
     _ = ra_directory:unregister_name(?RA_SYSTEM, UId),
     Dir = ra_env:server_data_dir(?RA_SYSTEM, UId),
-    {ok, Config} = ra_log:read_config(Dir),
-    case maps:get(machine, Config) of
-        {module, rabbit_fifo, _} ->
-            ra_lib:recursive_delete(Dir);
-        _ ->
-            ok
+    case filelib:is_dir(Dir) of
+        false ->
+            ok;
+        true ->
+            {ok, Config} = ra_log:read_config(Dir),
+            case maps:get(machine, Config) of
+                {module, rabbit_fifo, _} ->
+                    ra_lib:recursive_delete(Dir);
+                _ ->
+                    ok
+            end
     end.
 
 policy_changed(Q) ->
@@ -1389,16 +1400,31 @@ add_member(Q, Node, Membership) ->
     do_add_member(Q, Node, Membership, ?MEMBER_CHANGE_TIMEOUT).
 
 
-do_add_member(Q, Node, Membership, Timeout)
-  when ?is_amqqueue(Q) andalso
-       ?amqqueue_is_quorum(Q) andalso
+do_add_member(Q0, Node, Membership, Timeout)
+  when ?is_amqqueue(Q0) andalso
+       ?amqqueue_is_quorum(Q0) andalso
        is_atom(Node) ->
-    {RaName, _} = amqqueue:get_pid(Q),
-    QName = amqqueue:get_name(Q),
+    {RaName, _} = amqqueue:get_pid(Q0),
+    QName = amqqueue:get_name(Q0),
     %% TODO parallel calls might crash this, or add a duplicate in quorum_nodes
     ServerId = {RaName, Node},
-    Members = members(Q),
-
+    Members = [{ClusterName, _} | _]= members(Q0),
+    RaUId = ra_directory:uid_of(?RA_SYSTEM, RaName),
+    QTypeState0 = amqqueue:get_type_state(Q0),
+    RaUIds = maps:get(uids, QTypeState0, undefined),
+    QTypeState = case RaUIds of
+        undefined ->
+            %% Queue is not aware of node to uid mapping, do nothing
+            QTypeState0;
+        #{node() := RaUId} ->
+            %% Queue is aware and uid for current node is correct, do nothing
+            QTypeState0;
+        _ ->
+            %% Queue is aware and there's a mismatch for current node, regen uid
+            NewRaUId = ra:new_uid(ra_lib:to_binary(ClusterName)),
+            QTypeState0#{uids := maps:put(node(), NewRaUId, RaUIds)}
+    end,
+    Q = amqqueue:set_type_state(Q0, QTypeState),
     MachineVersion = erpc_call(Node, rabbit_fifo, version, [], infinity),
     Conf = make_ra_conf(Q, ServerId, Membership, MachineVersion),
     case ra:start_server(?RA_SYSTEM, Conf) of
@@ -1998,7 +2024,12 @@ make_ra_conf(Q, ServerId, TickTimeout,
     RaMachine = ra_machine(Q),
     [{ClusterName, _} | _] = Members = members(Q),
     {_, Node} = ServerId,
-    #{uids := #{Node := UId}} = amqqueue:get_type_state(Q),
+    UId = case amqqueue:get_type_state(Q) of
+        #{uids := #{Node := Id}} ->
+            Id;
+        _ ->
+            ra:new_uid(ra_lib:to_binary(ClusterName))
+    end,
     FName = rabbit_misc:rs(QName),
     Formatter = {?MODULE, format_ra_event, [QName]},
     LogCfg = #{uid => UId,
