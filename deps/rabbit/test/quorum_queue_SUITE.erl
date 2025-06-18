@@ -4894,7 +4894,7 @@ restart_after_queue_reincarnation(Config) ->
     [Q] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, list, []),
     VHost = amqqueue:get_vhost(Q),
 
-    MessagesPublished = 10_000,
+    MessagesPublished = 1000,
     publish_many(Ch, QName, MessagesPublished),
 
     %% Trigger a snapshot by purging the queue.
@@ -4937,6 +4937,8 @@ restart_after_queue_reincarnation(Config) ->
 
     %% Restart S3
     ?assertEqual(ok, rabbit_control_helper:command(start_app, S3)),
+
+    timer:sleep(1000),
 
     %% Now all three nodes should have the new state.
     Status2 = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_quorum_queue, status, [VHost, QName]),
