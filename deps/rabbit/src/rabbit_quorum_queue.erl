@@ -794,16 +794,18 @@ recover(_Vhost, Queues) ->
          ServerId = {Name, node()},
          QName = amqqueue:get_name(Q0),
          MutConf = make_mutable_config(Q0),
-         [{ClusterName, _} | _]= members(Q0),
          RaUId = ra_directory:uid_of(?RA_SYSTEM, Name),
          QTypeState0 = amqqueue:get_type_state(Q0),
          RaUIds = maps:get(uids, QTypeState0, undefined),
          case RaUIds of
              undefined ->
+                 %% Queue is not aware of node to uid mapping, do nothing
                  QTypeState0;
              #{node() := RaUId} ->
+                 %% Queue is aware and uid for current node is correct, do nothing
                  QTypeState0;
              _ ->
+                 %% Queue is aware and there's a mismatch for current node, regen uid
                  maybe_delete_data_dir(RaUId),
                  NewRaUId = ra:new_uid(ra_lib:to_binary(Name)),
                  QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
@@ -1408,7 +1410,7 @@ do_add_member(Q0, Node, Membership, Timeout)
     QName = amqqueue:get_name(Q0),
     %% TODO parallel calls might crash this, or add a duplicate in quorum_nodes
     ServerId = {RaName, Node},
-    Members = [{ClusterName, _} | _]= members(Q0),
+    Members = members(Q0),
     RaUId = ra_directory:uid_of(?RA_SYSTEM, RaName),
     QTypeState0 = amqqueue:get_type_state(Q0),
     RaUIds = maps:get(uids, QTypeState0, undefined),
@@ -1421,7 +1423,7 @@ do_add_member(Q0, Node, Membership, Timeout)
             QTypeState0;
         _ ->
             %% Queue is aware and there's a mismatch for current node, regen uid
-            NewRaUId = ra:new_uid(ra_lib:to_binary(ClusterName)),
+            NewRaUId = ra:new_uid(ra_lib:to_binary(RaName)),
             QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
     end,
     Q = amqqueue:set_type_state(Q0, QTypeState),
