@@ -804,9 +804,9 @@ recover(_Vhost, Queues) ->
              #{node() := RaUId} ->
                  QTypeState0;
              _ ->
-                 NewRaUId = ra:new_uid(ra_lib:to_binary(ClusterName)),
                  maybe_delete_data_dir(RaUId),
-                 QTypeState0#{uids := maps:put(node(), NewRaUId, RaUIds)}
+                 NewRaUId = ra:new_uid(ra_lib:to_binary(Name)),
+                 QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
          end,
          Res = case ra:restart_server(?RA_SYSTEM, ServerId, MutConf) of
                    ok ->
@@ -1422,7 +1422,7 @@ do_add_member(Q0, Node, Membership, Timeout)
         _ ->
             %% Queue is aware and there's a mismatch for current node, regen uid
             NewRaUId = ra:new_uid(ra_lib:to_binary(ClusterName)),
-            QTypeState0#{uids := maps:put(node(), NewRaUId, RaUIds)}
+            QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
     end,
     Q = amqqueue:set_type_state(Q0, QTypeState),
     MachineVersion = erpc_call(Node, rabbit_fifo, version, [], infinity),
@@ -2028,6 +2028,8 @@ make_ra_conf(Q, ServerId, TickTimeout,
         #{uids := #{Node := Id}} ->
             Id;
         _ ->
+            %% Queue was declared on an older version of RabbitMQ
+            %% and does not have the node to uid mappings
             ra:new_uid(ra_lib:to_binary(ClusterName))
     end,
     FName = rabbit_misc:rs(QName),
