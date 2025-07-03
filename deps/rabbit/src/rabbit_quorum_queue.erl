@@ -797,7 +797,7 @@ recover(_Vhost, Queues) ->
          RaUId = ra_directory:uid_of(?RA_SYSTEM, Name),
          QTypeState0 = amqqueue:get_type_state(Q0),
          RaUIds = maps:get(uids, QTypeState0, undefined),
-         case RaUIds of
+         QTypeState = case RaUIds of
              undefined ->
                  %% Queue is not aware of node to uid mapping, do nothing
                  QTypeState0;
@@ -810,6 +810,7 @@ recover(_Vhost, Queues) ->
                  NewRaUId = ra:new_uid(ra_lib:to_binary(Name)),
                  QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
          end,
+         Q = amqqueue:set_type_state(Q0, QTypeState),
          Res = case ra:restart_server(?RA_SYSTEM, ServerId, MutConf) of
                    ok ->
                        % queue was restarted, good
@@ -822,7 +823,7 @@ recover(_Vhost, Queues) ->
                                           [rabbit_misc:rs(QName), Err1]),
                        % queue was never started on this node
                        % so needs to be started from scratch.
-                       case start_server(make_ra_conf(Q0, ServerId)) of
+                       case start_server(make_ra_conf(Q, ServerId)) of
                            ok -> ok;
                            Err2 ->
                                rabbit_log:warning("recover: quorum queue ~w could not"
@@ -844,8 +845,7 @@ recover(_Vhost, Queues) ->
          %% present in the rabbit_queue table and not just in
          %% rabbit_durable_queue
          %% So many code paths are dependent on this.
-         ok = rabbit_db_queue:set_dirty(Q0),
-         Q = Q0,
+         ok = rabbit_db_queue:set_dirty(Q),
          case Res of
              ok ->
                  {[Q | R0], F0};
@@ -1418,8 +1418,8 @@ do_add_member(Q0, Node, Membership, Timeout)
         undefined ->
             %% Queue is not aware of node to uid mapping, do nothing
             QTypeState0;
-        #{node() := RaUId} ->
-            %% Queue is aware and uid for current node is correct, do nothing
+        #{Node := RaUId} ->
+            %% Queue is aware and uid for targeted node exists, do nothing
             QTypeState0;
         _ ->
             %% Queue is aware and there's a mismatch for current node, regen uid
@@ -1516,8 +1516,9 @@ delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
                     Fun = fun(Q1) ->
                                   update_type_state(
                                     Q1,
-                                    fun(#{nodes := Nodes} = Ts) ->
-                                            Ts#{nodes => lists:delete(Node, Nodes)}
+                                    fun(#{nodes := Nodes, uids := UIds} = Ts) ->
+                                            Ts#{nodes => lists:delete(Node, Nodes),
+                                                uids => maps:remove(Node, UIds)}
                                     end)
                           end,
                     _ = rabbit_amqqueue:update(QName, Fun),
