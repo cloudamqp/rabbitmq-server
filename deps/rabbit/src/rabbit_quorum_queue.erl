@@ -1516,7 +1516,8 @@ delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
                     Fun = fun(Q1) ->
                                   update_type_state(
                                     Q1,
-                                    fun(#{nodes := Nodes, uids := UIds} = Ts) ->
+                                    fun(#{nodes := Nodes} = Ts) ->
+                                            UIds = maps:get(uids, Ts, #{}),
                                             Ts#{nodes => lists:delete(Node, Nodes),
                                                 uids => maps:remove(Node, UIds)}
                                     end)

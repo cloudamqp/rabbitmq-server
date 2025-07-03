@@ -4978,9 +4978,6 @@ no_messages_after_queue_reincarnation(Config) ->
     publish(Ch, QName, <<"msg1">>),
     publish(Ch, QName, <<"msg2">>),
 
-    %% Trigger a snapshot by purging the queue.
-    rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_queue_type, purge, [Q]),
-
     %% Stop S3
     rabbit_ct_broker_helpers:mark_as_being_drained(Config, S3),
     ?assertEqual(ok, rabbit_control_helper:command(stop_app, S3)),
