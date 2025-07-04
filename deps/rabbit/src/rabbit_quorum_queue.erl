@@ -805,7 +805,8 @@ recover(_Vhost, Queues) ->
                  %% Queue is aware and uid for current node is correct, do nothing
                  QTypeState0;
              _ ->
-                 %% Queue is aware and there's a mismatch for current node, regen uid
+                 %% Queue is aware but either current node has no UId or it
+                 %% does not match the one returned by ra_directory, regen uid
                  maybe_delete_data_dir(RaUId),
                  NewRaUId = ra:new_uid(ra_lib:to_binary(Name)),
                  QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
@@ -1422,7 +1423,8 @@ do_add_member(Q0, Node, Membership, Timeout)
             %% Queue is aware and uid for targeted node exists, do nothing
             QTypeState0;
         _ ->
-            %% Queue is aware and there's a mismatch for current node, regen uid
+            %% Queue is aware but either current node has no UId or it
+            %% does not match the one returned by ra_directory, regen uid
             NewRaUId = ra:new_uid(ra_lib:to_binary(RaName)),
             QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
     end,
@@ -1517,9 +1519,12 @@ delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
                                   update_type_state(
                                     Q1,
                                     fun(#{nodes := Nodes} = Ts) ->
-                                            UIds = maps:get(uids, Ts, #{}),
+                                            UIds = case maps:get(uids, Ts, undefined) of
+                                                       undefined -> undefined;
+                                                       UIds0 -> maps:remove(Node, UIds0)
+                                                   end,
                                             Ts#{nodes => lists:delete(Node, Nodes),
-                                                uids => maps:remove(Node, UIds)}
+                                                uids => UIds}
                                     end)
                           end,
                     _ = rabbit_amqqueue:update(QName, Fun),
