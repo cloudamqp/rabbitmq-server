@@ -4886,6 +4886,7 @@ replica_states(Config) ->
 restart_after_queue_reincarnation(Config) ->
     [S1, S2, S3] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
     Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
+    AuxCh = rabbit_ct_client_helpers:open_channel(Config, S2),
     QName = <<"QQ">>,
 
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
@@ -4904,10 +4905,10 @@ restart_after_queue_reincarnation(Config) ->
     rabbit_ct_broker_helpers:mark_as_being_drained(Config, S3),
     ?assertEqual(ok, rabbit_control_helper:command(stop_app, S3)),
 
-    %% Delete and re-declare queue with the same name.
+    %% Delete and re-declare queue (on a different node) with the same name.
     rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, delete, [Q,false,false,<<"dummy_user">>]),
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
-                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+                 declare(AuxCh, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
 
     % Now S3 should have the old queue state, and S1 and S2 a new one.
     St1 = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_quorum_queue, status, [VHost, QName]),
@@ -4920,7 +4921,6 @@ restart_after_queue_reincarnation(Config) ->
     S3_LastApplied = proplists:get_value(<<"Last Applied">>, S3_Status1),
     S3_CommitIndex = proplists:get_value(<<"Commit Index">>, S3_Status1),
     S3_Term = proplists:get_value(<<"Term">>, S3_Status1),
-    ct:pal("Status0: ~tp~n", [Status0]),
 
     ?assertEqual(noproc, proplists:get_value(<<"Raft State">>, S3_Status1)),
     ?assertEqual(unknown, proplists:get_value(<<"Membership">>, S3_Status1)),
@@ -4968,6 +4968,7 @@ restart_after_queue_reincarnation(Config) ->
 no_messages_after_queue_reincarnation(Config) ->
     [S1, S2, S3] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
     Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
+    AuxCh = rabbit_ct_client_helpers:open_channel(Config, S2),
     QName = <<"QQ">>,
 
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
@@ -4999,7 +5000,7 @@ no_messages_after_queue_reincarnation(Config) ->
     %% Delete and re-declare queue with the same name.
     rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, delete, [Q,false,false,<<"dummy_user">>]),
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
-                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+                 declare(AuxCh, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
 
     %% Bumping term in online nodes
     rabbit_ct_broker_helpers:rpc(Config, 1, rabbit_quorum_queue, transfer_leadership, [Q, S2]),
