@@ -1412,7 +1412,7 @@ do_add_member(Q0, Node, Membership, Timeout)
     %% TODO parallel calls might crash this, or add a duplicate in quorum_nodes
     ServerId = {RaName, Node},
     Members = members(Q0),
-    RaUId = ra_directory:uid_of(?RA_SYSTEM, RaName),
+    RaUId = rpc:call(Node, ra_directory, uid_of, [?RA_SYSTEM, RaName]),
     QTypeState0 = amqqueue:get_type_state(Q0),
     RaUIds = maps:get(uids, QTypeState0, undefined),
     QTypeState = case RaUIds of
@@ -1518,13 +1518,12 @@ delete_member(Q, Node) when ?amqqueue_is_quorum(Q) ->
                     Fun = fun(Q1) ->
                                   update_type_state(
                                     Q1,
-                                    fun(#{nodes := Nodes} = Ts) ->
-                                            UIds = case maps:get(uids, Ts, undefined) of
-                                                       undefined -> undefined;
-                                                       UIds0 -> maps:remove(Node, UIds0)
-                                                   end,
+                                    fun(#{nodes := Nodes,
+                                          uids := UIds} = Ts) ->
                                             Ts#{nodes => lists:delete(Node, Nodes),
-                                                uids => UIds}
+                                                uids => maps:remove(Node, UIds)};
+                                       (#{nodes := Nodes} = Ts) ->
+                                            Ts#{nodes => lists:delete(Node, Nodes)}
                                     end)
                           end,
                     _ = rabbit_amqqueue:update(QName, Fun),

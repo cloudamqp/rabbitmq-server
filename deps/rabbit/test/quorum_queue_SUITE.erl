@@ -2804,7 +2804,7 @@ add_member_wrong_type(Config) ->
                           [<<"/">>, SQ, Server, voter, 5000])).
 
 add_member_already_a_member(Config) ->
-    [Server, Server2, _] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
+    [Server, Server2 | _] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
     Ch = rabbit_ct_client_helpers:open_channel(Config, Server),
     QQ = ?config(queue_name, Config),
     ?assertEqual({'queue.declare_ok', QQ, 0, 0},
