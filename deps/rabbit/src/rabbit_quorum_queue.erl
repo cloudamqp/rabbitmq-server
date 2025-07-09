@@ -1412,21 +1412,19 @@ do_add_member(Q0, Node, Membership, Timeout)
     %% TODO parallel calls might crash this, or add a duplicate in quorum_nodes
     ServerId = {RaName, Node},
     Members = members(Q0),
-    RaUId = rpc:call(Node, ra_directory, uid_of, [?RA_SYSTEM, RaName]),
     QTypeState0 = amqqueue:get_type_state(Q0),
     RaUIds = maps:get(uids, QTypeState0, undefined),
     QTypeState = case RaUIds of
         undefined ->
             %% Queue is not aware of node to uid mapping, do nothing
             QTypeState0;
-        #{Node := RaUId} ->
+        #{Node := _} ->
             %% Queue is aware and uid for targeted node exists, do nothing
             QTypeState0;
         _ ->
-            %% Queue is aware but either current node has no UId or it
-            %% does not match the one returned by ra_directory, regen uid
+            %% Queue is aware but current node has no UId, regen uid
             NewRaUId = ra:new_uid(ra_lib:to_binary(RaName)),
-            QTypeState0#{uids := RaUIds#{node() => NewRaUId}}
+            QTypeState0#{uids := RaUIds#{Node => NewRaUId}}
     end,
     Q = amqqueue:set_type_state(Q0, QTypeState),
     MachineVersion = erpc_call(Node, rabbit_fifo, version, [], infinity),

@@ -2809,13 +2809,16 @@ add_member_already_a_member(Config) ->
     QQ = ?config(queue_name, Config),
     ?assertEqual({'queue.declare_ok', QQ, 0, 0},
                  declare(Ch, QQ, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+    R1 = rpc:call(Server, rabbit_amqqueue, lookup, [{resource, <<"/">>, queue, QQ}]),
     %% idempotent by design
     ?assertEqual(ok,
                  rpc:call(Server, rabbit_quorum_queue, add_member,
                           [<<"/">>, QQ, Server, voter, 5000])),
+    ?assertEqual(R1, rpc:call(Server, rabbit_amqqueue, lookup, [{resource, <<"/">>, queue, QQ}])),
     ?assertEqual(ok,
                  rpc:call(Server, rabbit_quorum_queue, add_member,
-                          [<<"/">>, QQ, Server2, voter, 5000])).
+                          [<<"/">>, QQ, Server2, voter, 5000])),
+    ?assertEqual(R1, rpc:call(Server, rabbit_amqqueue, lookup, [{resource, <<"/">>, queue, QQ}])).
 
 add_member_not_found(Config) ->
     [Server | _] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
