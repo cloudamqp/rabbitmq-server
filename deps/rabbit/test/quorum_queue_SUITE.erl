@@ -4972,7 +4972,7 @@ restart_after_queue_reincarnation(Config) ->
 % Testcase motivated by : https://github.com/rabbitmq/rabbitmq-server/issues/12366
 no_messages_after_queue_reincarnation(Config) ->
     [S1, S2, S3] = rabbit_ct_broker_helpers:get_node_configs(Config, nodename),
-    Ch = rabbit_ct_client_helpers:open_channel(Config, S1),
+    Ch = rabbit_ct_client_helpers:open_channel(Config, S3),
     QName = <<"QQ">>,
 
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
@@ -4981,46 +4981,51 @@ no_messages_after_queue_reincarnation(Config) ->
     [Q] = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, list, []),
 
     publish(Ch, QName, <<"msg1">>),
-    publish(Ch, QName, <<"msg2">>),
+
+    %% Bump term so that old node will have higher term than newly created cluster
+    rabbit_ct_broker_helpers:rpc(Config, 1, rabbit_quorum_queue, transfer_leadership, [Q, S2]),
+
+    subscribe(Ch, QName, false, <<"tag0">>, [], 500),
+    receive
+        {#'basic.deliver'{consumer_tag = <<"tag0">>}, #amqp_msg{}} ->
+            ok
+    after 500 ->
+            ct:fail("Expected some delivery, but got none")
+    end,
+
+    receive UnexpectedDelivery ->
+            ct:pal("Unexpected delivery ~p", [UnexpectedDelivery]),
+            ct:fail("Unexpected delivery")
+    after 0 ->
+            ok
+    end,
 
     %% Stop S3
     rabbit_ct_broker_helpers:mark_as_being_drained(Config, S3),
     ?assertEqual(ok, rabbit_control_helper:command(stop_app, S3)),
 
-    qos(Ch, 1, false),
-    subscribe(Ch, QName, false, <<"tag0">>, [], 500),
-    DeliveryTag = receive
-        {#'basic.deliver'{delivery_tag = DT}, #amqp_msg{}} ->
-            receive
-                {#'basic.deliver'{consumer_tag = <<"tag0">>}, #amqp_msg{}} ->
-                    ct:fail("did not expect the second one")
-            after 500 ->
-                DT
-            end
-    after 500 ->
-            ct:fail("Expected some delivery, but got none")
-    end,
+    Ch2 = rabbit_ct_client_helpers:open_channel(Config, S1),
 
     %% Delete and re-declare queue with the same name.
     rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_amqqueue, delete, [Q,false,false,<<"dummy_user">>]),
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
-                 declare(Ch, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
+                 declare(Ch2, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
 
-    %% Bumping term in online nodes
-    rabbit_ct_broker_helpers:rpc(Config, 1, rabbit_quorum_queue, transfer_leadership, [Q, S2]),
+    qos(Ch2, 1, false),
+    subscribe(Ch2, QName, false, <<"tag1">>, [], 500),
 
     %% Restart S3
     ?assertEqual(ok, rabbit_control_helper:command(start_app, S3)),
 
-    ok = amqp_channel:cast(Ch, #'basic.ack'{delivery_tag = DeliveryTag,
-                                       multiple     = false}),
     %% No message should be delivered after reincarnation
     receive
-        {#'basic.deliver'{consumer_tag = <<"tag0">>}, #amqp_msg{}} ->
-            ct:fail("Expected no deliveries, but got one")
+        {#'basic.deliver'{consumer_tag = <<"tag1">>}, #amqp_msg{payload = Msg}} ->
+            ct:fail("Expected no deliveries, but got one ~p", [Msg])
     after 500 ->
             ok
-    end.
+    end,
+
+    ok.
 
 %%----------------------------------------------------------------------------
 
