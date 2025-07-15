@@ -5011,11 +5011,11 @@ no_messages_after_queue_reincarnation(Config) ->
     ?assertEqual({'queue.declare_ok', QName, 0, 0},
                  declare(Ch2, QName, [{<<"x-queue-type">>, longstr, <<"quorum">>}])),
 
-    qos(Ch2, 1, false),
-    subscribe(Ch2, QName, false, <<"tag1">>, [], 500),
-
     %% Restart S3
     ?assertEqual(ok, rabbit_control_helper:command(start_app, S3)),
+
+    qos(Ch2, 1, false),
+    subscribe(Ch2, QName, false, <<"tag1">>, [], 500),
 
     %% No message should be delivered after reincarnation
     receive
