@@ -4946,14 +4946,20 @@ restart_after_queue_reincarnation(Config) ->
     timer:sleep(1000),
 
     %% Now all three nodes should have the new state.
+    ?awaitMatch(
+       [leader, follower, follower],
+       begin
+           NodeStatusList = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_quorum_queue, status, [VHost, QName]),
+           RaftStates = [proplists:get_value(<<"Raft State">>, NodeStatus)
+                         ||NodeStatus <- NodeStatusList],
+           lists:reverse(lists:sort(RaftStates))
+       end,
+       5000,
+       500
+      ),
+
     Status2 = rabbit_ct_broker_helpers:rpc(Config, 0, rabbit_quorum_queue, status, [VHost, QName]),
-    % They are either leader or follower.
-    ?assert(
-       lists:all(
-         fun(NodeStatus) ->
-                 NodeRaftState = proplists:get_value(<<"Raft State">>, NodeStatus),
-                 lists:member(NodeRaftState, [leader, follower])
-         end, Status2)),
+
     % Remove "Node Name" and "Raft State" from the status.
     Status3 = [NE1, NE2, NE3]= [
         begin
