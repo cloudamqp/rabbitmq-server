@@ -1422,7 +1422,7 @@ do_add_member(Q0, Node, Membership, Timeout)
             %% Queue is aware and uid for targeted node exists, do nothing
             QTypeState0;
         _ ->
-            %% Queue is aware but current node has no UId, regen uid
+            %% Queue is aware but current node has no UId, generate new uid
             NewRaUId = ra:new_uid(ra_lib:to_binary(RaName)),
             QTypeState0#{uids := RaUIds#{Node => NewRaUId}}
     end,
