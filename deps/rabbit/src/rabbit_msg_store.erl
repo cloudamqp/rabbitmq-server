@@ -2123,9 +2123,17 @@ delete_file(File, State = #gc_state { file_summary_ets = FileSummaryEts,
             [#file_summary{ valid_total_size = 0,
                             file_size = FileSize }] = ets:lookup(FileSummaryEts, File),
             [] = scan_and_vacuum_message_file(File, State),
-            ok = file:delete(form_filename(Dir, filenum_to_name(File))),
+            Filename = form_filename(Dir, filenum_to_name(File)),
+            case file:delete(Filename) of
+                ok ->
+                    rabbit_log:debug("Deleted empty file number ~tp; reclaimed ~tp bytes", [File, FileSize]);
+                {error, enoent} ->
+                    rabbit_log:debug("File number ~tp (~ts) was already deleted; reclaimed ~tp bytes", [File, Filename, FileSize]);
+                {error, Reason} ->
+                    rabbit_log:warning("Failed to delete file number ~tp (~ts): ~tp", [File, Filename, Reason]),
+                    exit({failed_to_delete_file, File, Reason})
+            end,
             true = ets:delete(FileSummaryEts, File),
-            rabbit_log:debug("Deleted empty file number ~tp; reclaimed ~tp bytes", [File, FileSize]),
             ok
     end.
 
