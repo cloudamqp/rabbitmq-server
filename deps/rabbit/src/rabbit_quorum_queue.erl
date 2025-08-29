@@ -363,6 +363,12 @@ gather_policy_config(Q, IsQueueDeclaration) ->
                                     ok
                             end,
                             ?DEFAULT_DELIVERY_LIMIT;
+                        DL when is_number(DL) andalso DL < 0 andalso not IsQueueDeclaration ->
+                            %% Delivery limit disabled
+                            %% Set it to undefined as that is how it
+                            %% is represented in the current config of
+                            %% fifo state.
+                            undefined;
                         DL ->
                             DL
                     end,
