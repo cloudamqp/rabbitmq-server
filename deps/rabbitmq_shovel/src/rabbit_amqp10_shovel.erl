@@ -257,11 +257,19 @@ handle_dest({amqp10_event, {link, Link, {detached, Why}}},
             #{dest := #{current := #{link := Link}}}) ->
     {stop, {outbound_link_detached, Why}};
 handle_dest({amqp10_event, {link, Link, credited}},
-            State0 = #{dest := #{current := #{link := Link},
-                                 pending := Pend} = Dst}) ->
+            State0 = #{dest := #{current := #{link := Link} = Current,
+                                 pending := Pend} = Dst0}) ->
+    Dst =
+        case Dst0 of
+            #{credit_timer := TRef} ->
+                erlang:cancel_timer(TRef),
+                maps:without(credit_timer, Dst0);
+            _ ->
+                Dst0
+        end,
 
     %% we have credit so can begin to forward
-    State = State0#{dest => Dst#{link_state => credited,
+    State = State0#{dest => Dst#{current => Current#{link_state => credited},
                                  pending => []}},
     lists:foldl(fun ({A, B}, S) ->
                         forward(A, B, S)
@@ -269,6 +277,8 @@ handle_dest({amqp10_event, {link, Link, credited}},
 handle_dest({amqp10_event, {link, Link, _Evt}},
             State= #{dest := #{current := #{link := Link}}}) ->
     State;
+handle_dest(credited_timeout, _State) ->
+    {stop, credited_timeout};
 handle_dest({'EXIT', Conn, Reason},
             #{dest := #{current := #{conn := Conn}}}) ->
     {stop, {outbound_conn_died, Reason}};
@@ -333,9 +343,9 @@ forward(_Tag, _Mc,
 forward(Tag, Mc,
         #{dest := #{current := #{link_state := attached},
                     pending := Pend0} = Dst} = State) ->
-    %% simply cache the forward oo
+    %% simply cache the forward
     Pend = [{Tag, Mc} | Pend0],
-    State#{dest => Dst#{pending => {Pend}}};
+    State#{dest => Dst#{pending => Pend}};
 forward(Tag, Msg0,
         #{dest := #{current := #{link := Link},
                     unacked := Unacked} = Dst,
@@ -356,8 +366,14 @@ forward(Tag, Msg0,
                       State1 = rabbit_shovel_behaviour:ack(Tag, false, State),
                       rabbit_shovel_behaviour:decr_remaining(1, State1)
               end);
-        Stop ->
-            Stop
+        no_credit ->
+            TRef = erlang:send_after(?LINK_CREDIT_TIMEOUT, self(), credited_timeout),
+
+            #{current := Current0,
+              pending := Pend0} = Dst,
+            State#{dest => Dst#{current => Current0#{link_state := attached},
+                                pending => [{Tag, Msg0}|Pend0],
+                                credit_timer => TRef}}
     end.
 
 send_msg(Link, Msg) ->
@@ -365,11 +381,7 @@ send_msg(Link, Msg) ->
         ok ->
             ok;
         {error, insufficient_credit} ->
-            receive {amqp10_event, {link, Link, credited}} ->
-                    send_msg(Link, Msg)
-            after ?LINK_CREDIT_TIMEOUT ->
-                      {stop, credited_timeout}
-            end
+            no_credit
     end.
 
 add_timestamp_header(#{dest := #{add_timestamp_header := true}}, Msg) ->
