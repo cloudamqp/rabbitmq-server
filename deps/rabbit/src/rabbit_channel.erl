@@ -2771,10 +2771,10 @@ handle_consumer_timed_out(Timeout,#pending_ack{delivery_tag = DeliveryTag, tag =
                   rabbit_misc:rs(QName),
                   DeliveryTag, Timeout]),
     Ex = rabbit_misc:amqp_error(precondition_failed,
-				"delivery acknowledgement on channel ~w timed out. "
+				"delivery acknowledgement on channel ~w and queue ~ts timed out. "
 				"Timeout value used: ~tp ms. "
 				"This timeout value can be configured, see consumers doc guide to learn more",
-				[Channel, Timeout], none),
+				[Channel, rabbit_misc:rs(QName), Timeout], none),
     handle_exception(Ex, State).
 
 handle_queue_actions(Actions, State) ->
