@@ -378,11 +378,19 @@ handle_dest(_Msg, _State) ->
     not_handled.
 
 close_source(#{source := #{current := #{conn := Conn}}}) ->
+    %% Unlink before asynchronously closing the connection. Otherwise, if the
+    %% shovel worker terminates with a shovel-specific reason such as
+    %% {inbound_link_detached, _} or {outbound_link_detached, _}, that EXIT
+    %% would propagate to the AMQP 1.0 connection process (which traps exits)
+    %% while it is in the close_sent state and crash it with a function_clause.
+    _ = unlink(Conn),
     _ = amqp10_client:close_connection(Conn),
     ok;
 close_source(_Config) -> ok.
 
 close_dest(#{dest := #{current := #{conn := Conn}}}) ->
+    %% See the comment in close_source/1 for why we unlink before closing.
+    _ = unlink(Conn),
     _ = amqp10_client:close_connection(Conn),
     ok;
 close_dest(_Config) -> ok.

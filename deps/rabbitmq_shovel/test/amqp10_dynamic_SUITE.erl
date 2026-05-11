@@ -35,7 +35,8 @@ groups() ->
           change_definition,
           simple_amqp10_dest,
           amqp091_to_amqp10_with_dead_lettering,
-          test_amqp10_delete_after_queue_length
+          test_amqp10_delete_after_queue_length,
+          outbound_link_detached
         ]},
       {with_map_config, [], [
           simple,
@@ -198,6 +199,68 @@ change_definition(Config) ->
               amqp10_expect_empty(Sess, Dest),
               amqp10_expect_empty(Sess, Dest2)
       end).
+
+%% Regression test for a crash where the AMQP 1.0 client connection process
+%% was killed with function_clause in its close_sent state because the shovel
+%% worker, linked to the connection, exited with a shovel-specific reason
+%% ({outbound_link_detached, _}). The connection process now never receives
+%% that exit because the shovel unlinks before initiating the close.
+outbound_link_detached(Config) ->
+    Src = ?config(srcq, Config),
+    Dest = ?config(destq, Config),
+    with_amqp10_session(Config,
+      fun (Sess) ->
+              amqp10_declare_queue(Sess, Src, #{}),
+              amqp10_declare_queue(Sess, Dest, #{})
+      end),
+    shovel_test_utils:set_param(Config, ?PARAM,
+                                [{<<"src-address">>,  Src},
+                                 {<<"src-protocol">>, <<"amqp10">>},
+                                 {<<"dest-protocol">>, <<"amqp10">>},
+                                 {<<"dest-address">>, Dest}]),
+    %% Trigger an outbound link detach by deleting the destination queue and
+    %% wait for the AMQP 1.0 destination connection process to terminate.
+    %% Without the fix, that process crashed with function_clause; with the
+    %% fix it exits cleanly.
+    {DestConn, Reason} =
+        rabbit_ct_broker_helpers:rpc(
+          Config, 0, ?MODULE, detach_dest_and_await, [Dest]),
+    case Reason of
+        normal -> ok;
+        shutdown -> ok;
+        {shutdown, _} -> ok;
+        _ -> ct:fail({unexpected_dest_conn_exit_reason, DestConn, Reason})
+    end.
+
+%% Runs on the broker node: finds the shovel worker, monitors its AMQP 1.0
+%% destination connection, deletes the destination queue (which causes the
+%% broker to detach the outbound link with resource-deleted), and waits for
+%% the connection process to terminate.
+detach_dest_and_await(DestQ) ->
+    ShovelPid = find_shovel_pid(),
+    #{dest := #{current := #{conn := DestConn}}} =
+        gen_server2:with_state(ShovelPid,
+                               fun rabbit_shovel_worker:get_internal_config/1),
+    MRef = erlang:monitor(process, DestConn),
+    DestRes = rabbit_misc:r(<<"/">>, queue, DestQ),
+    case rabbit_amqqueue:lookup(DestRes) of
+        {ok, Q} ->
+            {ok, _} = rabbit_amqqueue:delete(Q, false, false, <<"shovel-test">>);
+        _ ->
+            ok
+    end,
+    receive
+        {'DOWN', MRef, process, DestConn, Reason} ->
+            {DestConn, Reason}
+    after 30_000 ->
+            exit({timeout_waiting_for_dest_conn_down, DestConn})
+    end.
+
+find_shovel_pid() ->
+    [Pid] = [P || P <- erlang:processes(),
+                  rabbit_shovel_worker ==
+                      (catch element(1, proc_lib:initial_call(P)))],
+    Pid.
 
 test_amqp10_delete_after_queue_length(Config) ->
     Src = ?config(srcq, Config),

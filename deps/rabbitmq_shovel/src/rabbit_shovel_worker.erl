@@ -227,7 +227,7 @@ terminate({{shutdown, {server_initiated_close, Code, Reason}}, _}, State = #stat
     close_connections(State),
     ok;
 terminate({shutdown, outbond_conn_failed}, State = #state{name = Name}) ->
-    ?LOG_ERROR("Shovel ~ts is stopping because if failed to connect to destination",
+    ?LOG_ERROR("Shovel ~ts is stopping because it failed to connect to destination",
                [human_readable_name(Name)]),
     rabbit_shovel_status:report(State#state.name, State#state.type,
                                 {terminated, "failed to connect to destination"}),
