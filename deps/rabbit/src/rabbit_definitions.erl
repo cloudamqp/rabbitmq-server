@@ -48,7 +48,7 @@
          should_skip_if_unchanged/0
         ]).
 
--export([all_definitions/0]).
+-export([all_definitions/0, fold_bindings/3]).
 -export([
   list_users/0, list_vhosts/0, list_permissions/0, list_topic_permissions/0,
   list_runtime_parameters/0, list_global_runtime_parameters/0, list_policies/0,
@@ -295,6 +295,24 @@ all_definitions() ->
         bindings          => Bs,
         exchanges         => Xs
     }.
+
+-spec fold_bindings(Scope, Fun, Acc) -> Acc when
+      Scope :: all | {vhost, vhost:name()},
+      Fun :: fun((Binding :: map(), Acc) -> Acc),
+      Acc :: term().
+%% @doc Folds over exported (explicit) bindings as definition maps, optionally
+%% restricted to a single virtual host. Unlike list_bindings/0 it never
+%% materialises the full binding list, which matters on data sets with very
+%% many bindings.
+fold_bindings(Scope, Fun, Acc) ->
+    rabbit_db_binding:fold(
+      fun(#binding{source = #resource{virtual_host = VHost}} = Binding, Acc0) ->
+              case Scope of
+                  all            -> Fun(binding_definition(Binding), Acc0);
+                  {vhost, VHost} -> Fun(binding_definition(Binding), Acc0);
+                  _              -> Acc0
+              end
+      end, Acc).
 
 -spec has_configured_definitions_to_load() -> boolean().
 has_configured_definitions_to_load() ->

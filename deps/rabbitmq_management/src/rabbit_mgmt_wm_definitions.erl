@@ -12,7 +12,6 @@
 -export([accept_multipart/2]).
 -export([variances/2]).
 
--import(rabbit_misc, [pget/2]).
 
 -include("rabbit_mgmt.hrl").
 -include_lib("rabbitmq_management_agent/include/rabbit_mgmt_records.hrl").
@@ -40,58 +39,197 @@ allowed_methods(ReqData, Context) ->
 to_json(ReqData, Context) ->
     case rabbit_mgmt_util:vhost(ReqData) of
         none ->
-            all_definitions(ReqData, Context);
+            export(all, ReqData, Context);
         not_found ->
             rabbit_mgmt_util:bad_request(rabbit_data_coercion:to_binary("vhost_not_found"),
                                          ReqData, Context);
-        VHost ->
-            vhost_definitions(ReqData, VHost, Context)
+        VHostName ->
+            export({vhost, VHostName}, ReqData, Context)
     end.
 
-all_definitions(ReqData, Context) ->
-    Xs = [X || X <- rabbit_mgmt_wm_exchanges:basic(ReqData),
-               export_exchange(X)],
-    Qs = [Q || Q <- rabbit_mgmt_wm_queues:basic(ReqData),
-               export_queue(Q)],
-    QNames = [{pget(name, Q), pget(vhost, Q)} || Q <- Qs],
-    Bs = [B || B <- rabbit_mgmt_wm_bindings:basic(ReqData),
-               export_binding(B, QNames)],
-    Vsn = rabbit:base_product_version(),
-    ProductName = rabbit:product_name(),
-    ProductVersion = rabbit:product_version(),
+%% Single, scope-parameterised definitions export shared by the cluster-wide
+%% (GET /api/definitions) and per-virtual-host (GET /api/definitions/:vhost)
+%% endpoints. Scope is 'all' or {vhost, Name}.
+%%
+%% Everything but the bindings is gathered up front as maps (the canonical
+%% definition format from rabbit_definitions, the same one used by
+%% `rabbitmqctl export_definitions`), filtered to the virtual host when scoped.
+%% Bindings are streamed via rabbit_definitions:fold_bindings/3 so the
+%% potentially very large set is never materialised in memory.
+export(Scope, ReqData0, Context) ->
+    ReqData = set_download_header(ReqData0),
+    SmallParts = small_parts(Scope),
+    case maps:get(media_type, ReqData, undefined) of
+        {<<"application">>, <<"bert">>, _} ->
+            buffered(Scope, SmallParts, fun erlang:term_to_binary/1, ReqData, Context);
+        _ ->
+            case cowboy_req:method(ReqData) of
+                <<"GET">> -> stream_export(Scope, SmallParts, ReqData, Context);
+                _         -> buffered(Scope, SmallParts, fun rabbit_json:encode/1, ReqData, Context)
+            end
+    end.
 
-    Contents = [
-        {users,             rabbit_mgmt_wm_users:users(all)},
-        {vhosts,            rabbit_mgmt_wm_vhosts:basic()},
-        {permissions,       rabbit_mgmt_wm_permissions:permissions()},
-        {topic_permissions, rabbit_mgmt_wm_topic_permissions:topic_permissions()},
-        {parameters,        rabbit_mgmt_wm_parameters:basic(ReqData)},
-        {global_parameters, rabbit_mgmt_wm_global_parameters:basic()},
-        {policies,          rabbit_mgmt_wm_policies:basic(ReqData)},
-        {queues,            Qs},
-        {exchanges,         Xs},
-        {bindings,          Bs}
-    ],
+%% Gathers everything except bindings. The version/product metadata and which
+%% categories are included depend on the scope; for a single virtual host the
+%% per-item 'vhost' field is stripped, matching the historical behaviour.
+small_parts(all) ->
+    Vsn = rabbit_data_coercion:to_binary(rabbit:base_product_version()),
+    ClusterName = rabbit_nodes:cluster_name(),
+    #{
+        rabbit_version             => Vsn,
+        rabbitmq_version           => Vsn,
+        product_name               => rabbit_data_coercion:to_binary(rabbit:product_name()),
+        product_version            => rabbit_data_coercion:to_binary(rabbit:product_version()),
+        rabbitmq_definition_format => <<"cluster">>,
+        original_cluster_name      => ClusterName,
+        explanation                => rabbit_data_coercion:to_binary(
+                                        io_lib:format("Definitions of cluster '~ts'", [ClusterName])),
+        users                      => rabbit_definitions:list_users(),
+        vhosts                     => rabbit_definitions:list_vhosts(),
+        permissions                => rabbit_definitions:list_permissions(),
+        topic_permissions          => rabbit_definitions:list_topic_permissions(),
+        parameters                 => rabbit_definitions:list_runtime_parameters(),
+        global_parameters          => rabbit_definitions:list_global_runtime_parameters(),
+        policies                   => rabbit_definitions:list_policies(),
+        queues                     => rabbit_definitions:list_queues(),
+        exchanges                  => rabbit_definitions:list_exchanges()
+    };
+small_parts({vhost, VHostName}) ->
+    VHost = rabbit_vhost:lookup(VHostName),
+    Vsn = rabbit_data_coercion:to_binary(rabbit:base_product_version()),
+    %% Filter the cluster-wide category to this virtual host and drop the now
+    %% redundant 'vhost' field from each item.
+    Keep = fun(List) ->
+                   [maps:remove(<<"vhost">>, Item)
+                    || Item <- List, maps:get(<<"vhost">>, Item, undefined) =:= VHostName]
+           end,
+    #{
+        rabbit_version             => Vsn,
+        rabbitmq_version           => Vsn,
+        product_name               => rabbit_data_coercion:to_binary(rabbit:product_name()),
+        product_version            => rabbit_data_coercion:to_binary(rabbit:product_version()),
+        rabbitmq_definition_format => <<"single_virtual_host">>,
+        original_vhost_name        => VHostName,
+        explanation                => rabbit_data_coercion:to_binary(
+                                        io_lib:format("Definitions of virtual host '~ts'", [VHostName])),
+        metadata                   => vhost:get_metadata(VHost),
+        description                => vhost:get_description(VHost),
+        limits                     => vhost:get_limits(VHost),
+        parameters                 => Keep(rabbit_definitions:list_runtime_parameters()),
+        policies                   => Keep(rabbit_definitions:list_policies()),
+        queues                     => Keep(rabbit_definitions:list_queues()),
+        exchanges                  => Keep(rabbit_definitions:list_exchanges())
+    }.
 
-    TopLevelDefsAndMetadata = [
-        {rabbit_version, rabbit_data_coercion:to_binary(Vsn)},
-        {rabbitmq_version, rabbit_data_coercion:to_binary(Vsn)},
-        {product_name, rabbit_data_coercion:to_binary(ProductName)},
-        {product_version, rabbit_data_coercion:to_binary(ProductVersion)},
-        {rabbitmq_definition_format, <<"cluster">>},
-        {original_cluster_name, rabbit_nodes:cluster_name()},
-        {explanation, rabbit_data_coercion:to_binary(io_lib:format("Definitions of cluster '~ts'", [rabbit_nodes:cluster_name()]))}
-    ],
-    Result = TopLevelDefsAndMetadata ++ retain_whitelisted(Contents),
-    ReqData1 = case rabbit_mgmt_util:qs_val(<<"download">>, ReqData) of
-                   undefined -> ReqData;
-                   Filename  -> rabbit_mgmt_util:set_resp_header(
+%% Buffered fallback for BERT (cannot be streamed incrementally) and HEAD
+%% (which must not carry a body). Bindings are materialised here; the common
+%% GET+JSON path streams them instead.
+buffered(Scope, SmallParts, Encode, ReqData0, Context) ->
+    Bindings = lists:reverse(
+                 rabbit_definitions:fold_bindings(
+                   Scope, fun(B, Acc) -> [maybe_strip(Scope, B) | Acc] end, [])),
+    ReqData = rabbit_mgmt_util:set_resp_header(<<"cache-control">>, "no-cache", ReqData0),
+    {Encode(SmallParts#{bindings => Bindings}), ReqData, Context}.
+
+%% Sets the Content-Disposition header when a ?download=<filename> query
+%% parameter is present, so the export can be saved to a file by the browser.
+set_download_header(ReqData) ->
+    case rabbit_mgmt_util:qs_val(<<"download">>, ReqData) of
+        undefined -> ReqData;
+        Filename  -> rabbit_mgmt_util:set_resp_header(
                        <<"Content-Disposition">>,
-                       "attachment; filename=" ++
-                       binary_to_list(Filename), ReqData)
-               end,
+                       "attachment; filename=" ++ binary_to_list(Filename), ReqData)
+    end.
 
-    rabbit_mgmt_util:reply(Result, ReqData1, Context).
+maybe_strip({vhost, _}, Map) -> maps:remove(<<"vhost">>, Map);
+maybe_strip(all, Map)        -> Map.
+
+%% Number of array elements (e.g. bindings) encoded per streamed chunk. Large
+%% enough to keep HTTP chunk overhead low, small enough to bound peak memory.
+-define(STREAM_BATCH_SIZE, 2000).
+
+%% Streams the JSON response without ever materialising the whole document. The
+%% small categories are streamed first, then bindings are folded straight from
+%% the store into the socket in batches. The cowboy_rest etag/content-type
+%% response headers are already set when the provider callback runs, so
+%% stream_reply/3 picks them up; we only add cache-control. Returns {stop, ...}
+%% so cowboy_rest treats the response as already sent.
+stream_export(Scope, SmallParts, ReqData0, Context) ->
+    ReqData1 = cowboy_req:set_resp_header(<<"cache-control">>, <<"no-cache">>, ReqData0),
+    ReqData = cowboy_req:stream_reply(200, #{}, ReqData1),
+    ok = cowboy_req:stream_body(<<"{">>, nofin, ReqData),
+    %% small_parts/1 always contains metadata, so it is never empty: the
+    %% bindings entry below can unconditionally be comma-prefixed.
+    stream_entries(maps:to_list(SmallParts), ReqData, true),
+    ok = cowboy_req:stream_body([$,, <<"\"bindings\":[">>], nofin, ReqData),
+    {ReqData, First, Pending, _N} =
+        rabbit_definitions:fold_bindings(
+          Scope,
+          fun(B, {Req, Fst, Batch, N}) ->
+                  B1 = maybe_strip(Scope, B),
+                  case N + 1 >= ?STREAM_BATCH_SIZE of
+                      true ->
+                          ok = cowboy_req:stream_body(
+                                 encode_batch(lists:reverse([B1 | Batch]), Fst), nofin, Req),
+                          {Req, false, [], 0};
+                      false ->
+                          {Req, Fst, [B1 | Batch], N + 1}
+                  end
+          end,
+          {ReqData, true, [], 0}),
+    case Pending of
+        [] -> ok;
+        _  -> ok = cowboy_req:stream_body(encode_batch(lists:reverse(Pending), First), nofin, ReqData)
+    end,
+    ok = cowboy_req:stream_body(<<"]}">>, fin, ReqData),
+    {stop, ReqData, Context}.
+
+stream_entries([], _ReqData, _First) ->
+    ok;
+stream_entries([{Key, Value} | Rest], ReqData, First) ->
+    Prefix = case First of
+                 true  -> [encode_key(Key), $:];
+                 false -> [$,, encode_key(Key), $:]
+             end,
+    ok = cowboy_req:stream_body(Prefix, nofin, ReqData),
+    stream_value(Value, ReqData),
+    stream_entries(Rest, ReqData, false).
+
+encode_key(Key) when is_atom(Key)   -> [$", atom_to_binary(Key, utf8), $"];
+encode_key(Key) when is_binary(Key) -> [$", Key, $"].
+
+%% Category lists (queues, exchanges, bindings, ...) are lists of maps; they
+%% are streamed element by element, in batches, so a huge category never sits
+%% fully encoded in memory. Any other value -- scalars, maps, and proplists
+%% such as a virtual host's `limits' -- is encoded whole by rabbit_json, which
+%% correctly renders proplists as JSON objects.
+stream_value([], ReqData) ->
+    ok = cowboy_req:stream_body(<<"[]">>, nofin, ReqData);
+stream_value([H | _] = Value, ReqData) when is_map(H) ->
+    ok = cowboy_req:stream_body(<<"[">>, nofin, ReqData),
+    stream_array(Value, ReqData, true),
+    ok = cowboy_req:stream_body(<<"]">>, nofin, ReqData);
+stream_value(Value, ReqData) ->
+    ok = cowboy_req:stream_body(rabbit_json:encode(Value), nofin, ReqData).
+
+stream_array([], _ReqData, _First) ->
+    ok;
+stream_array(List, ReqData, First) ->
+    {Batch, Rest} = split_batch(List, ?STREAM_BATCH_SIZE, []),
+    ok = cowboy_req:stream_body(encode_batch(Batch, First), nofin, ReqData),
+    stream_array(Rest, ReqData, false).
+
+split_batch([H | T], N, Acc) when N > 0 -> split_batch(T, N - 1, [H | Acc]);
+split_batch(Rest, _N, Acc)              -> {lists:reverse(Acc), Rest}.
+
+%% First =:= true means this is the opening batch, whose first element must not
+%% be preceded by a comma. Every other element is comma-prefixed.
+encode_batch([], _First) ->
+    [];
+encode_batch([H | T], true) ->
+    [rabbit_json:encode(H) | encode_batch(T, false)];
+encode_batch([H | T], false) ->
+    [$,, rabbit_json:encode(H) | encode_batch(T, false)].
 
 accept_json(ReqData0, Context) ->
     BodySizeLimit = application:get_env(rabbitmq_management, max_http_body_size, ?MANAGEMENT_DEFAULT_HTTP_MAX_BODY_SIZE),
@@ -103,59 +241,6 @@ accept_json(ReqData0, Context) ->
         {ok, Body, ReqData} ->
             accept(Body, ReqData, Context)
     end.
-
-vhost_definitions(ReqData, VHostName, Context) ->
-    %% the existence of this virtual host is verified in the called, 'to_json/2'
-    VHost = rabbit_vhost:lookup(VHostName),
-
-    %% rabbit_mgmt_wm_<>:basic/1 filters by VHost if it is available.
-    %% TODO: should we stop stripping virtual host? Such files cannot be imported on boot, for example.
-    Xs = [strip_vhost(X) || X <- rabbit_mgmt_wm_exchanges:basic(ReqData),
-               export_exchange(X)],
-    VQs = [Q || Q <- rabbit_mgmt_wm_queues:basic(ReqData), export_queue(Q)],
-    Qs = [strip_vhost(Q) || Q <- VQs],
-    QNames = [{pget(name, Q), pget(vhost, Q)} || Q <- VQs],
-    %% TODO: should we stop stripping virtual host? Such files cannot be imported on boot, for example.
-    Bs = [strip_vhost(B) || B <- rabbit_mgmt_wm_bindings:basic(ReqData),
-                            export_binding(B, QNames)],
-    Parameters = [strip_vhost(
-                    rabbit_mgmt_format:parameter(P))
-                  || P <- rabbit_runtime_parameters:list(VHostName)],
-    Contents = [
-        {parameters,  Parameters},
-        {policies,    [strip_vhost(P) || P <- rabbit_mgmt_wm_policies:basic(ReqData)]},
-        {queues,      Qs},
-        {exchanges,   Xs},
-        {bindings,    Bs}
-    ],
-
-    Vsn = rabbit:base_product_version(),
-    ProductName = rabbit:product_name(),
-    ProductVersion = rabbit:product_version(),
-
-    Metadata = vhost:get_metadata(VHost),
-
-    TopLevelDefsAndMetadata = [
-        {rabbit_version, rabbit_data_coercion:to_binary(Vsn)},
-        {rabbitmq_version, rabbit_data_coercion:to_binary(Vsn)},
-        {product_name, rabbit_data_coercion:to_binary(ProductName)},
-        {product_version, rabbit_data_coercion:to_binary(ProductVersion)},
-        {rabbitmq_definition_format, <<"single_virtual_host">>},
-        {original_vhost_name, VHostName},
-        {explanation, rabbit_data_coercion:to_binary(io_lib:format("Definitions of virtual host '~ts'", [VHostName]))},
-        {metadata, Metadata},
-        {description, vhost:get_description(VHost)},
-        {limits, vhost:get_limits(VHost)}
-    ],
-    Result = TopLevelDefsAndMetadata ++ retain_whitelisted(Contents),
-
-    ReqData1 = case rabbit_mgmt_util:qs_val(<<"download">>, ReqData) of
-                   undefined -> ReqData;
-                   Filename  ->
-                       HeaderVal = "attachment; filename=" ++ binary_to_list(Filename),
-                       rabbit_mgmt_util:set_resp_header(<<"Content-Disposition">>, HeaderVal, ReqData)
-               end,
-    rabbit_mgmt_util:reply(Result, ReqData1, Context).
 
 accept_multipart(ReqData0, Context) ->
     {Parts, ReqData} = get_all_parts(ReqData0),
@@ -269,56 +354,3 @@ get_part(Name, Parts) ->
         false -> unknown;
         {_, Value} -> Value
     end.
-
-export_queue(Queue) ->
-    pget(owner_pid, Queue) == none.
-
-export_binding(Binding, Qs) ->
-    Src      = pget(source,           Binding),
-    Dest     = pget(destination,      Binding),
-    DestType = pget(destination_type, Binding),
-    VHost    = pget(vhost,            Binding),
-    Src =/= <<"">>
-        andalso
-          ( (DestType =:= queue andalso lists:member({Dest, VHost}, Qs))
-            orelse (DestType =:= exchange andalso Dest =/= <<"">>) ).
-
-export_exchange(Exchange) ->
-    export_name(pget(name, Exchange)).
-
-export_name(<<>>)                 -> false;
-export_name(<<"amq.", _/binary>>) -> false;
-export_name(_Name)                -> true.
-
-%%--------------------------------------------------------------------
-
-rw_state() ->
-    [{users,              [name, password_hash, hashing_algorithm, tags, limits]},
-     {vhosts,             [name, description, tags, metadata]},
-     {permissions,        [user, vhost, configure, write, read]},
-     {topic_permissions,  [user, vhost, exchange, write, read]},
-     {parameters,         [vhost, component, name, value]},
-     {global_parameters,  [name, value]},
-     {policies,           [vhost, name, pattern, definition, priority, 'apply-to']},
-     {queues,             [name, vhost, durable, auto_delete, arguments]},
-     {exchanges,          [name, vhost, type, durable, auto_delete, internal,
-                           arguments]},
-     {bindings,           [source, vhost, destination, destination_type, routing_key,
-                           arguments]}].
-
-retain_whitelisted(Items) ->
-    [retain_whitelisted_items(N, V, proplists:get_value(N, rw_state())) || {N, V} <- Items].
-
-retain_whitelisted_items(Name, List, Allowed) ->
-    {Name, [only_whitelisted_for_item(I, Allowed) || I <- List]}.
-
-only_whitelisted_for_item(Item, Allowed) when is_map(Item) ->
-    Map1 = maps:with(Allowed, Item),
-    maps:filter(fun(_Key, Val) ->
-                    Val =/= undefined
-                end, Map1);
-only_whitelisted_for_item(Item, Allowed) when is_list(Item) ->
-    [{K, Fact} || {K, Fact} <- Item, lists:member(K, Allowed), Fact =/= undefined].
-
-strip_vhost(Item) ->
-    lists:keydelete(vhost, 1, Item).
